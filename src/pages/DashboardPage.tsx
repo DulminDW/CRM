@@ -5,47 +5,102 @@ import {
   Percent,
   Send,
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  UserPlus,
+  ArrowRight
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export const DashboardPage: React.FC = () => {
   return (
     <div className="space-y-6">
-      {/* Welcome & Security Banner */}
-      <div className="bg-white p-6 rounded-xl border border-crm-border shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-2">
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-              Architecture Stage: Phase 1 Initialized
-            </span>
-            <span className="text-xs text-slate-400">Date: November 2026</span>
+      {/* Welcome & Rate Sharing Hero Section */}
+      <div className="bg-gradient-to-r from-crm-navy via-slate-900 to-crm-navy text-white p-6 md:p-8 rounded-2xl border border-slate-800 shadow-lg relative overflow-hidden">
+        <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-blue-500/5 blur-3xl pointer-events-none" />
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="max-w-2xl">
+            <div className="flex items-center space-x-2">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-400/30">
+                Sales Desk &bull; Live Rate Sharing
+              </span>
+              <span className="text-xs text-slate-400">November 2026</span>
+            </div>
+            <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight mt-3">
+              WINDOW COMPANIES CRM
+            </h2>
+            <p className="text-sm md:text-base text-slate-300 mt-2 leading-relaxed">
+              Fast, on-the-go hotel rate distribution for sales representatives visiting Travel Agencies. Search existing agency contacts or add new ones on the spot and prepare quotes in seconds.
+            </p>
           </div>
-          <h2 className="text-2xl font-bold text-crm-navy mt-2">WINDOW COMPANIES CRM</h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Internal Sales Desk for Partner Hotel Rates, Agency Contacts, Special Quotes & Sales Distribution.
-          </p>
-        </div>
 
-        <div className="flex items-center space-x-3">
-          <Link
-            to="/share-rates"
-            className="inline-flex items-center space-x-2 px-4 py-2 rounded-lg bg-crm-blue text-white text-xs font-semibold hover:bg-crm-blue-hover transition-colors shadow-sm"
-          >
-            <Send className="w-4 h-4" />
-            <span>Preview Share Wizard</span>
-          </Link>
-          <Link
-            to="/rates"
-            className="inline-flex items-center space-x-2 px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition-colors border border-slate-200"
-          >
-            <Percent className="w-4 h-4" />
-            <span>Rate Management</span>
-          </Link>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <Link
+              to="/share-rates"
+              className="inline-flex items-center justify-center space-x-2.5 px-6 py-3.5 rounded-xl bg-blue-600 text-white font-bold text-sm hover:bg-blue-500 transition-all shadow-md shadow-blue-600/30 group"
+            >
+              <Send className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+              <span>Send Hotel Rates</span>
+              <ArrowRight className="w-4 h-4 opacity-75" />
+            </Link>
+            <Link
+              to="/rates"
+              className="inline-flex items-center justify-center space-x-2 px-4 py-3.5 rounded-xl bg-slate-800/80 text-slate-200 text-sm font-semibold hover:bg-slate-700 transition-colors border border-slate-700"
+            >
+              <Percent className="w-4 h-4 text-slate-400" />
+              <span>Rate Hub</span>
+            </Link>
+          </div>
         </div>
       </div>
 
-      {/* Metrics Shell (Real calculations pending live data in future phases) */}
+      {/* Prominent Quick-Action Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Link
+          to="/share-rates"
+          className="bg-white p-5 rounded-xl border-2 border-blue-100 hover:border-blue-400 shadow-sm transition-all flex items-start space-x-4 group"
+        >
+          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors">
+            <Send className="w-6 h-6" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+                Send Hotel Rates to Agency Contact
+              </h3>
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">
+                Primary Flow
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1 leading-normal">
+              Select existing agency contacts or quickly add new ones during on-site visits, choose rate tiers (Red/Green/Yellow or Custom 1-3), review special conditions, and dispatch rate proposals.
+            </p>
+          </div>
+        </Link>
+
+        <Link
+          to="/agencies"
+          className="bg-white p-5 rounded-xl border border-crm-border hover:border-slate-400 shadow-sm transition-all flex items-start space-x-4 group"
+        >
+          <div className="p-3 bg-slate-100 text-slate-700 rounded-xl group-hover:bg-slate-800 group-hover:text-white transition-colors">
+            <UserPlus className="w-6 h-6" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 group-hover:text-slate-700 transition-colors">
+                Manage Agency Contacts Directory
+              </h3>
+              <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                Directory
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1 leading-normal">
+              Browse ~1,000 agency contacts structured under Agency &rarr; Market &rarr; Member hierarchies with direct WhatsApp, phone, email, and designation records.
+            </p>
+          </div>
+        </Link>
+      </div>
+
+      {/* Metrics Shell */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Partner Hotels', icon: Hotel, count: '4 Hotels', hint: 'Randoli, Beragala, Horton Heights, H.S.H' },
@@ -140,20 +195,20 @@ export const DashboardPage: React.FC = () => {
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
           </div>
           <p className="text-xs text-slate-500">
-            Security requirements to be enforced in Phase 2 &amp; beyond:
+            Security requirements enforced across the CRM:
           </p>
           <ul className="space-y-2 text-xs text-slate-600">
             <li className="flex items-start space-x-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 flex-shrink-0" />
-              <span>Zero-trust: Client inputs never trusted without server-side validation.</span>
+              <span>Zero-trust: Client inputs validated before persisting to Supabase.</span>
             </li>
             <li className="flex items-start space-x-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 flex-shrink-0" />
-              <span>Default-deny: No open table access without Supabase RLS policies.</span>
+              <span>Default-deny: Row Level Security restricts staff vs admin operations.</span>
             </li>
             <li className="flex items-start space-x-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 flex-shrink-0" />
-              <span>Zero fake auth: No simulated login screens or faux localStorage security.</span>
+              <span>Immutable Quotes: Sent quotes preserve historical rate snapshots.</span>
             </li>
             <li className="flex items-start space-x-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 flex-shrink-0" />
