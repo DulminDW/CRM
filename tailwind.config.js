@@ -8,22 +8,23 @@ export default {
     extend: {
       colors: {
         crm: {
-          navy: '#102344',
-          'navy-dark': '#0B1830',
-          'navy-light': '#1A335F',
-          blue: '#1765CE',
-          'blue-hover': '#1354AC',
-          bg: '#F4F7FC',
+          navy: '#08264F',
+          'navy-dark': '#061D3D',
+          'navy-light': '#0D3874',
+          blue: '#1455D9',
+          'blue-hover': '#1044B2',
+          'blue-light': '#EAF2FF',
+          bg: '#FFFFFF',
           card: '#FFFFFF',
-          border: '#E2E8F0',
-          muted: '#64748B',
-          dark: '#0F172A',
+          border: '#D9E0EA',
+          muted: '#667085',
+          dark: '#101828',
           rate: {
-            red: '#EF4444',
+            red: '#DC2626',
             'red-bg': '#FEE2E2',
-            green: '#10B981',
-            'green-bg': '#D1FAE5',
-            yellow: '#F59E0B',
+            green: '#16A34A',
+            'green-bg': '#DCFCE7',
+            yellow: '#D97706',
             'yellow-bg': '#FEF3C7',
           }
         }

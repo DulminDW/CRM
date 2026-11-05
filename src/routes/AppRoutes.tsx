@@ -1,8 +1,13 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { MainLayout } from '../components/layout/MainLayout';
+import { ProtectedRoute } from '../components/common/ProtectedRoute';
 
-// Pages
+// Auth & Public Pages
+import { LoginPage } from '../pages/LoginPage';
+import { NotFoundPage } from '../pages/NotFoundPage';
+
+// CRM Pages
 import { DashboardPage } from '../pages/DashboardPage';
 import { TravelAgenciesPage } from '../pages/TravelAgenciesPage';
 import { MarketsPage } from '../pages/MarketsPage';
@@ -22,7 +27,18 @@ import { SettingsPage } from '../pages/SettingsPage';
 export const AppRoutes: React.FC = () => {
   return (
     <Routes>
-      <Route element={<MainLayout />}>
+      {/* Public Routes */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/404" element={<NotFoundPage />} />
+
+      {/* Protected CRM Console Routes */}
+      <Route
+        element={
+          <ProtectedRoute>
+            <MainLayout />
+          </ProtectedRoute>
+        }
+      >
         {/* Core Overview */}
         <Route path="/" element={<DashboardPage />} />
 
@@ -34,8 +50,24 @@ export const AppRoutes: React.FC = () => {
         {/* Hotels & Pricing */}
         <Route path="/hotels" element={<HotelsPage />} />
         <Route path="/seasons" element={<HotelSeasonsPage />} />
-        <Route path="/rates" element={<RateManagementPage />} />
-        <Route path="/special-rates" element={<SpecialRatesPage />} />
+
+        {/* Rate Management (Requires CAN_MANAGE_RATES permission or ADMIN) */}
+        <Route
+          path="/rates"
+          element={
+            <ProtectedRoute requiredPermission="CAN_MANAGE_RATES">
+              <RateManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/special-rates"
+          element={
+            <ProtectedRoute requiredPermission="CAN_MANAGE_RATES">
+              <SpecialRatesPage />
+            </ProtectedRoute>
+          }
+        />
         <Route path="/calculator" element={<RateCalculatorPage />} />
 
         {/* Sales & Distribution */}
@@ -48,11 +80,20 @@ export const AppRoutes: React.FC = () => {
 
         {/* Intelligence & Administration */}
         <Route path="/analytics" element={<AnalyticsPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
 
-        {/* Catch-all redirect to Dashboard */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* Settings (Requires ADMIN role) */}
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute requiredRole="ADMIN">
+              <SettingsPage />
+            </ProtectedRoute>
+          }
+        />
       </Route>
+
+      {/* Catch-all redirect to 404 */}
+      <Route path="*" element={<Navigate to="/404" replace />} />
     </Routes>
   );
 };
