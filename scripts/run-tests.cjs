@@ -141,13 +141,76 @@ function testMemberHierarchyIntegrity() {
   return { name: 'Composite Agency-Market Hierarchy Rule', status: 'PASS', totalTested: 3 };
 }
 
+// 5. Recipient Scopes Deduplication & Hierarchy Consistency Test
+function resolveRecipients(agencyId, scope, selectedMarketIds, selectedMemberIds, members) {
+  const seenEmails = new Set();
+  const recipients = [];
+
+  for (const m of members) {
+    if (m.agency_id !== agencyId) continue;
+    if (m.status !== 'ACTIVE') continue;
+    if (!m.email || !EMAIL_REGEX.test(m.email.trim())) continue;
+
+    let isSelected = false;
+    if (scope === 'COMPANY') {
+      isSelected = true;
+    } else if (scope === 'MARKETS') {
+      isSelected = Boolean(m.market_id && selectedMarketIds.includes(m.market_id));
+    } else if (scope === 'INDIVIDUALS') {
+      isSelected = selectedMemberIds.includes(m.id);
+    }
+
+    if (!isSelected) continue;
+
+    const normalizedEmail = m.email.toLowerCase().trim();
+    if (!seenEmails.has(normalizedEmail)) {
+      seenEmails.add(normalizedEmail);
+      recipients.push({ id: m.id, email: normalizedEmail });
+    }
+  }
+
+  return recipients;
+}
+
+function testRecipientScopesResolution() {
+  const mockMembers = [
+    { id: '1', agency_id: 'agency-A', market_id: 'mkt-1', email: 'alice@agency-a.com', status: 'ACTIVE' },
+    { id: '2', agency_id: 'agency-A', market_id: 'mkt-1', email: 'alice@agency-a.com', status: 'ACTIVE' }, // Duplicate email in same market
+    { id: '3', agency_id: 'agency-A', market_id: 'mkt-2', email: 'bob@agency-a.com', status: 'ACTIVE' },
+    { id: '4', agency_id: 'agency-A', market_id: 'mkt-2', email: 'invalid-email', status: 'ACTIVE' }, // Invalid email
+    { id: '5', agency_id: 'agency-A', market_id: 'mkt-2', email: 'inactive@agency-a.com', status: 'INACTIVE' }, // Inactive
+    { id: '6', agency_id: 'agency-B', market_id: 'mkt-3', email: 'charlie@agency-b.com', status: 'ACTIVE' } // Different agency
+  ];
+
+  // Test Scope 1: COMPANY (Must include alice and bob once, never include duplicate, invalid, inactive, or agency-B)
+  const rCompany = resolveRecipients('agency-A', 'COMPANY', [], [], mockMembers);
+  if (rCompany.length !== 2 || !rCompany.some(r => r.email === 'alice@agency-a.com') || !rCompany.some(r => r.email === 'bob@agency-a.com')) {
+    throw new Error('COMPANY scope resolution failed to deduplicate or exclude invalid records');
+  }
+
+  // Test Scope 2: MARKETS (Only mkt-1 selected)
+  const rMarket = resolveRecipients('agency-A', 'MARKETS', ['mkt-1'], [], mockMembers);
+  if (rMarket.length !== 1 || rMarket[0].email !== 'alice@agency-a.com') {
+    throw new Error('MARKETS scope resolution failed');
+  }
+
+  // Test Scope 3: INDIVIDUALS (Only bob selected)
+  const rIndiv = resolveRecipients('agency-A', 'INDIVIDUALS', [], ['3'], mockMembers);
+  if (rIndiv.length !== 1 || rIndiv[0].email !== 'bob@agency-a.com') {
+    throw new Error('INDIVIDUALS scope resolution failed');
+  }
+
+  return { name: 'Recipient Scopes Deduplication & Hierarchy Consistency', status: 'PASS', totalTested: 3 };
+}
+
 // Run all test suites
 try {
   const results = [
     testEmailValidation(),
     testSeasonDateValidation(),
     testSeasonDateOverlapDetection(),
-    testMemberHierarchyIntegrity()
+    testMemberHierarchyIntegrity(),
+    testRecipientScopesResolution()
   ];
 
   console.log(JSON.stringify({ status: 'ALL_TESTS_PASSED', results }, null, 2));

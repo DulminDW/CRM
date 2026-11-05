@@ -15,7 +15,7 @@ import { rateService } from '../services/rateService';
 import { contractService, HotelContract } from '../services/contractService';
 import { customRateService, CustomRateTemplate } from '../services/customRateService';
 import { quoteService, SavedQuoteItem } from '../services/quoteService';
-import { RecipientSelector, SelectedRecipient } from '../components/rates/RecipientSelector';
+import { RecipientSelector, SelectedRecipient, RecipientScope } from '../components/rates/RecipientSelector';
 import { HotelRecord, HotelSeasonRecord } from '../types/hotelHierarchy';
 
 export const ShareRatesPage: React.FC = () => {
@@ -39,6 +39,7 @@ export const ShareRatesPage: React.FC = () => {
 
   // Recipients
   const [selectedRecipients, setSelectedRecipients] = useState<SelectedRecipient[]>([]);
+  const [recipientScope, setRecipientScope] = useState<RecipientScope>('INDIVIDUALS');
 
   // Special Conditions & Notes
   const [specialConditions, setSpecialConditions] = useState<string>(
@@ -176,11 +177,21 @@ export const ShareRatesPage: React.FC = () => {
         }
       ];
 
+      // Map UI recipientScope to database quote recipient_scope
+      let dbRecipientScope: 'INDIVIDUAL' | 'ENTIRE_MARKET' | 'ENTIRE_AGENCY' = 'INDIVIDUAL';
+      if (recipientScope === 'COMPANY') {
+        dbRecipientScope = 'ENTIRE_AGENCY';
+      } else if (recipientScope === 'MARKETS') {
+        dbRecipientScope = 'ENTIRE_MARKET';
+      } else {
+        dbRecipientScope = selectedRecipients.length > 1 ? 'ENTIRE_AGENCY' : 'INDIVIDUAL';
+      }
+
       const savedQuote = await quoteService.saveQuoteSnapshot(
         {
           agency_id: firstRecipient.agencyId,
           market_id: firstRecipient.marketId || null,
-          recipient_scope: selectedRecipients.length > 1 ? 'ENTIRE_AGENCY' : 'INDIVIDUAL',
+          recipient_scope: dbRecipientScope,
           email_subject: emailSubject,
           email_body_html: emailBodyHtml,
           recipients: selectedRecipients,
@@ -448,7 +459,10 @@ export const ShareRatesPage: React.FC = () => {
               Recipient Targeting Hierarchy
             </h3>
 
-            <RecipientSelector onSelectionChange={setSelectedRecipients} />
+            <RecipientSelector
+              onSelectionChange={setSelectedRecipients}
+              onScopeChange={setRecipientScope}
+            />
           </div>
 
           {/* Action Bar */}

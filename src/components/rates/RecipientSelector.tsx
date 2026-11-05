@@ -11,7 +11,10 @@ import {
   X,
   AlertTriangle,
   AlertCircle,
-  Plus
+  Plus,
+  Check,
+  Filter,
+  UserCheck
 } from 'lucide-react';
 import { fetchAgencies, createAgency } from '../../services/agencyService';
 import { fetchMarkets, createMarket } from '../../services/marketService';
@@ -22,6 +25,8 @@ import {
   CreateMemberInput
 } from '../../services/memberService';
 import { TravelAgencyRecord, AgencyMarketRecord, AgencyMemberRecord } from '../../types/agencyHierarchy';
+
+export type RecipientScope = 'COMPANY' | 'MARKETS' | 'INDIVIDUALS';
 
 export interface SelectedRecipient {
   memberId: string;
@@ -36,21 +41,38 @@ export interface SelectedRecipient {
 
 interface RecipientSelectorProps {
   onSelectionChange: (recipients: SelectedRecipient[]) => void;
+  onScopeChange?: (scope: RecipientScope) => void;
   initialAgencyId?: string;
 }
 
+// Validation regex matching PostgreSQL email constraints
+const EMAIL_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
 export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
   onSelectionChange,
+  onScopeChange,
   initialAgencyId
 }) => {
+  // Master Agency list
   const [agencies, setAgencies] = useState<TravelAgencyRecord[]>([]);
   const [selectedAgencyId, setSelectedAgencyId] = useState<string>(initialAgencyId || '');
+
+  // Hierarchy Data for the Selected Agency
   const [markets, setMarkets] = useState<{ id: string; market_name: string }[]>([]);
-  const [selectedMarketIds, setSelectedMarketIds] = useState<string[]>([]);
   const [members, setMembers] = useState<AgencyMemberRecord[]>([]);
-  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Recipient Scopes: 1. COMPANY, 2. MARKETS, 3. INDIVIDUALS
+  const [scope, setScope] = useState<RecipientScope>('INDIVIDUALS');
+
+  // Scope 2: Selected Market(s)
+  const [selectedMarketIds, setSelectedMarketIds] = useState<string[]>([]);
+
+  // Scope 3: Selected Individual Member IDs
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+
+  // Search query within contacts list
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Quick Add Contact Modal State
   const [addContactModalOpen, setAddContactModalOpen] = useState(false);
@@ -68,7 +90,7 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
 
-  // Load agencies
+  // 1. Load agencies on mount
   const loadAgencies = useCallback(async () => {
     const res = await fetchAgencies();
     setAgencies(res.data);
@@ -82,7 +104,7 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
     loadAgencies();
   }, [loadAgencies]);
 
-  // Load markets & members when agency changes
+  // 2. Load hierarchy data (markets & members) strictly belonging to the selected agency
   const loadAgencyData = useCallback(async (agencyId: string) => {
     if (!agencyId) {
       setMarkets([]);
@@ -98,15 +120,27 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
       fetchMembers(agencyId)
     ]);
 
-    setMarkets(marketRes.data.map((m: AgencyMarketRecord) => ({ id: m.id, market_name: m.market_name })));
-    const allMktIds = marketRes.data.map((m: AgencyMarketRecord) => m.id);
-    setSelectedMarketIds(allMktIds);
+    const agencyMarkets = marketRes.data.map((m: AgencyMarketRecord) => ({
+      id: m.id,
+      market_name: m.market_name
+    }));
+    setMarkets(agencyMarkets);
 
-    setMembers(memberRes.data);
-    const validMemberIds = memberRes.data
-      .filter((m: AgencyMemberRecord) => m.email && m.status === 'ACTIVE')
+    // Filter members to strictly belong to this agency
+    const agencyMembers = memberRes.data.filter(
+      (m: AgencyMemberRecord) => m.agency_id === agencyId
+    );
+    setMembers(agencyMembers);
+
+    // Default market selection: select all markets in the agency
+    setSelectedMarketIds(agencyMarkets.map((m: { id: string }) => m.id));
+
+    // Default member selection based on scope:
+    const validMemberIds = agencyMembers
+      .filter((m: AgencyMemberRecord) => m.email && EMAIL_REGEX.test(m.email.trim()) && m.status === 'ACTIVE')
       .map((m: AgencyMemberRecord) => m.id);
     setSelectedMemberIds(validMemberIds);
+
     setLoading(false);
   }, []);
 
@@ -114,23 +148,85 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
     loadAgencyData(selectedAgencyId);
   }, [selectedAgencyId, loadAgencyData]);
 
-  // Filter members by selected markets and search query
-  const filteredMembers = useMemo(() => {
+  // Notify parent of scope changes
+  const handleScopeChange = (newScope: RecipientScope) => {
+    setScope(newScope);
+    if (onScopeChange) {
+      onScopeChange(newScope);
+    }
+
+    // Auto-align selections based on newly selected scope
+    if (newScope === 'COMPANY') {
+      // Entire Company: select all active members with valid email in this agency
+      const validAgencyMemberIds = members
+        .filter((m) => m.agency_id === selectedAgencyId && m.email && EMAIL_REGEX.test(m.email.trim()) && m.status === 'ACTIVE')
+        .map((m) => m.id);
+      setSelectedMemberIds(validAgencyMemberIds);
+      setSelectedMarketIds(markets.map((m) => m.id));
+    } else if (newScope === 'MARKETS') {
+      // Selected Markets: select all members belonging to currently selected markets
+      const validMarketMemberIds = members
+        .filter((m) =>
+          m.agency_id === selectedAgencyId &&
+          m.market_id &&
+          selectedMarketIds.includes(m.market_id) &&
+          m.email &&
+          EMAIL_REGEX.test(m.email.trim()) &&
+          m.status === 'ACTIVE'
+        )
+        .map((m) => m.id);
+      setSelectedMemberIds(validMarketMemberIds);
+    }
+  };
+
+  // When selected markets change under 'MARKETS' scope, dynamically align the selected members
+  const toggleMarket = (marketId: string) => {
+    const updatedMarketIds = selectedMarketIds.includes(marketId)
+      ? selectedMarketIds.filter((id) => id !== marketId)
+      : [...selectedMarketIds, marketId];
+    
+    setSelectedMarketIds(updatedMarketIds);
+
+    if (scope === 'MARKETS') {
+      const validMarketMemberIds = members
+        .filter((m) =>
+          m.agency_id === selectedAgencyId &&
+          m.market_id &&
+          updatedMarketIds.includes(m.market_id) &&
+          m.email &&
+          EMAIL_REGEX.test(m.email.trim()) &&
+          m.status === 'ACTIVE'
+        )
+        .map((m) => m.id);
+      setSelectedMemberIds(validMarketMemberIds);
+    }
+  };
+
+  // Contacts visible for individual selection (filtered by search query & market if in markets mode)
+  const visibleMembers = useMemo(() => {
     return members.filter((m) => {
-      const inSelectedMarket = !m.market_id || selectedMarketIds.includes(m.market_id);
-      const q = searchQuery.toLowerCase();
-      const matchesSearch =
-        q === '' ||
+      // Strict agency match
+      if (m.agency_id !== selectedAgencyId) return false;
+
+      // In MARKETS scope, only show members in selected markets
+      if (scope === 'MARKETS' && m.market_id && !selectedMarketIds.includes(m.market_id)) {
+        return false;
+      }
+
+      const q = searchQuery.toLowerCase().trim();
+      if (!q) return true;
+
+      return (
         m.full_name.toLowerCase().includes(q) ||
         (m.email && m.email.toLowerCase().includes(q)) ||
         (m.position && m.position.toLowerCase().includes(q)) ||
-        (m.market_name && m.market_name.toLowerCase().includes(q));
-      return inSelectedMarket && matchesSearch;
+        (m.market_name && m.market_name.toLowerCase().includes(q))
+      );
     });
-  }, [members, selectedMarketIds, searchQuery]);
+  }, [members, selectedAgencyId, scope, selectedMarketIds, searchQuery]);
 
-  // Notify parent of selected recipients with deduplicated emails
-  useEffect(() => {
+  // Compute final recipients with strict deduplication by normalized email and hierarchy validation
+  const finalRecipients = useMemo(() => {
     const selectedAgency = agencies.find((a) => a.id === selectedAgencyId);
     const agencyName = selectedAgency ? selectedAgency.name : 'Unknown Agency';
 
@@ -138,46 +234,69 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
     const recipients: SelectedRecipient[] = [];
 
     members.forEach((m) => {
-      if (selectedMemberIds.includes(m.id) && m.email) {
-        const normalizedEmail = m.email.toLowerCase().trim();
-        if (!seenEmails.has(normalizedEmail)) {
-          seenEmails.add(normalizedEmail);
-          recipients.push({
-            memberId: m.id,
-            fullName: m.full_name,
-            email: m.email,
-            agencyId: selectedAgencyId,
-            agencyName,
-            marketId: m.market_id,
-            marketName: m.market_name,
-            designation: m.position || undefined
-          });
-        }
+      // 1. Strict agency integrity check (Never include contacts from another agency)
+      if (m.agency_id !== selectedAgencyId) return;
+
+      // 2. Check if selected
+      let isCandidate = false;
+      if (scope === 'COMPANY') {
+        isCandidate = true; // All eligible contacts in the agency
+      } else if (scope === 'MARKETS') {
+        isCandidate = Boolean(m.market_id && selectedMarketIds.includes(m.market_id));
+      } else {
+        // INDIVIDUALS
+        isCandidate = selectedMemberIds.includes(m.id);
+      }
+
+      if (!isCandidate) return;
+
+      // 3. Email safety & format validation
+      if (!m.email || !EMAIL_REGEX.test(m.email.trim())) return;
+
+      // 4. Status check (active only)
+      if (m.status !== 'ACTIVE') return;
+
+      // 5. Prevent duplicate email addresses in the final recipient list
+      const normalizedEmail = m.email.toLowerCase().trim();
+      if (!seenEmails.has(normalizedEmail)) {
+        seenEmails.add(normalizedEmail);
+        recipients.push({
+          memberId: m.id,
+          fullName: m.full_name,
+          email: m.email.trim(),
+          agencyId: selectedAgencyId,
+          agencyName,
+          marketId: m.market_id,
+          marketName: m.market_name,
+          designation: m.position || undefined
+        });
       }
     });
 
-    onSelectionChange(recipients);
-  }, [selectedMemberIds, members, selectedAgencyId, agencies, onSelectionChange]);
+    return recipients;
+  }, [members, agencies, selectedAgencyId, scope, selectedMarketIds, selectedMemberIds]);
 
-  const handleSelectAll = () => {
-    const validFilteredIds = filteredMembers.filter((m) => m.email && m.status === 'ACTIVE').map((m) => m.id);
-    setSelectedMemberIds((prev) => Array.from(new Set([...prev, ...validFilteredIds])));
+  // Notify parent component whenever finalRecipients change
+  useEffect(() => {
+    onSelectionChange(finalRecipients);
+  }, [finalRecipients, onSelectionChange]);
+
+  // Individual Selection Controls
+  const handleSelectAllVisible = () => {
+    const validVisibleIds = visibleMembers
+      .filter((m) => m.email && EMAIL_REGEX.test(m.email.trim()) && m.status === 'ACTIVE')
+      .map((m) => m.id);
+    setSelectedMemberIds((prev) => Array.from(new Set([...prev, ...validVisibleIds])));
   };
 
-  const handleDeselectAll = () => {
-    const filteredIdSet = new Set(filteredMembers.map((m) => m.id));
-    setSelectedMemberIds((prev) => prev.filter((id) => !filteredIdSet.has(id)));
+  const handleDeselectAllVisible = () => {
+    const visibleIdSet = new Set(visibleMembers.map((m) => m.id));
+    setSelectedMemberIds((prev) => prev.filter((id) => !visibleIdSet.has(id)));
   };
 
-  const toggleMember = (memberId: string) => {
+  const toggleIndividualMember = (memberId: string) => {
     setSelectedMemberIds((prev) =>
       prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
-    );
-  };
-
-  const toggleMarket = (marketId: string) => {
-    setSelectedMarketIds((prev) =>
-      prev.includes(marketId) ? prev.filter((id) => id !== marketId) : [...prev, marketId]
     );
   };
 
@@ -206,22 +325,22 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
       if (result.isDuplicate && result.existingMember) {
         if (result.isSameAgencyMarket) {
           setDuplicateWarning(
-            `Notice: ${result.existingMember.full_name} is already registered under this market with this email.`
+            `Notice: ${result.existingMember.full_name} is already registered under this market desk.`
           );
         } else {
           setDuplicateWarning(
-            `Cross-desk duplicate: This email is also used by ${result.existingMember.full_name} at ${result.existingMember.agency_name} (${result.existingMember.market_name}).`
+            `Cross-desk notice: This email is already registered to ${result.existingMember.full_name} under ${result.existingMember.agency_name} (${result.existingMember.market_name}).`
           );
         }
       } else {
         setDuplicateWarning(null);
       }
     } catch {
-      // Ignore background check error
+      // Ignore background check failure
     }
   };
 
-  // Handle Quick Add Contact Submit
+  // Save new contact and make it immediately selectable
   const handleSaveContact = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -247,7 +366,7 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
 
     // 2. Create new market if needed
     if (newMarketMode || !targetMarketId) {
-      const mktName = newMarketName.trim() || 'General Market';
+      const mktName = newMarketName.trim() || 'General Market Desk';
       const mktRes = await createMarket({
         agency_id: targetAgencyId,
         market_name: mktName
@@ -264,8 +383,8 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
       setFormError('Please enter the contact person’s full name.');
       return;
     }
-    if (!formEmail.trim() || !formEmail.includes('@')) {
-      setFormError('Please enter a valid email address.');
+    if (!formEmail.trim() || !EMAIL_REGEX.test(formEmail.trim())) {
+      setFormError('Please enter a valid email address (e.g., name@agency.com).');
       return;
     }
 
@@ -287,14 +406,16 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
         return;
       }
 
-      // 4. Update local state & immediately select the new contact
+      // 4. Update hierarchy and ensure the new contact is immediately available and selected
       const newMember = res.data;
       if (targetAgencyId === selectedAgencyId) {
         await loadAgencyData(targetAgencyId);
         setSelectedMemberIds((prev) => [...prev, newMember.id]);
+        if (targetMarketId && !selectedMarketIds.includes(targetMarketId)) {
+          setSelectedMarketIds((prev) => [...prev, targetMarketId]);
+        }
       } else {
         setSelectedAgencyId(targetAgencyId);
-        // Will trigger loadAgencyData
       }
 
       setAddContactModalOpen(false);
@@ -309,7 +430,7 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* 1. Select Parent Agency + Quick Add Action */}
+      {/* 1. Travel Agency Selector + Quick Add Contact Action */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex-1">
           <label className="block text-xs font-semibold uppercase tracking-wider text-[#667085] mb-2">
@@ -342,12 +463,78 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
         </div>
       </div>
 
-      {/* 2. Market Filters */}
+      {/* 2. Three Recipient Scopes (Company → Market → Individual) */}
+      <div className="space-y-2">
+        <label className="block text-xs font-semibold uppercase tracking-wider text-[#667085]">
+          2. Recipient Scope Mode
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={() => handleScopeChange('COMPANY')}
+            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+              scope === 'COMPANY'
+                ? 'border-[#1455D9] bg-[#EAF2FF]/60 text-[#1455D9] ring-2 ring-[#1455D9]/20'
+                : 'border-[#D9E0EA] bg-white text-[#667085] hover:bg-slate-50'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider">Scope 1</span>
+              {scope === 'COMPANY' && <Check className="w-4 h-4 text-[#1455D9]" />}
+            </div>
+            <div className="mt-1 font-bold text-xs text-[#101828]">Entire Company</div>
+            <span className="text-[10px] text-[#667085] mt-0.5">All contacts in agency</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleScopeChange('MARKETS')}
+            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+              scope === 'MARKETS'
+                ? 'border-[#1455D9] bg-[#EAF2FF]/60 text-[#1455D9] ring-2 ring-[#1455D9]/20'
+                : 'border-[#D9E0EA] bg-white text-[#667085] hover:bg-slate-50'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider">Scope 2</span>
+              {scope === 'MARKETS' && <Check className="w-4 h-4 text-[#1455D9]" />}
+            </div>
+            <div className="mt-1 font-bold text-xs text-[#101828]">Selected Market(s)</div>
+            <span className="text-[10px] text-[#667085] mt-0.5">By regional desks</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleScopeChange('INDIVIDUALS')}
+            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+              scope === 'INDIVIDUALS'
+                ? 'border-[#1455D9] bg-[#EAF2FF]/60 text-[#1455D9] ring-2 ring-[#1455D9]/20'
+                : 'border-[#D9E0EA] bg-white text-[#667085] hover:bg-slate-50'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider">Scope 3</span>
+              {scope === 'INDIVIDUALS' && <Check className="w-4 h-4 text-[#1455D9]" />}
+            </div>
+            <div className="mt-1 font-bold text-xs text-[#101828]">Selected Individuals</div>
+            <span className="text-[10px] text-[#667085] mt-0.5">Custom member picks</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 3. Regional Markets Filter (Visible in MARKETS scope or optionally as a filter) */}
       {markets.length > 0 && (
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-[#667085] mb-2">
-            2. Regional Market Desks (Filter)
-          </label>
+        <div className="bg-[#F8FAFC] p-3.5 rounded-xl border border-[#D9E0EA] space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-[#101828] flex items-center gap-1.5">
+              <Filter className="w-3.5 h-3.5 text-[#1455D9]" />
+              <span>Regional Market Desks under {currentAgency?.name || 'Selected Agency'}</span>
+            </label>
+            <span className="text-[11px] text-[#667085]">
+              {selectedMarketIds.length} of {markets.length} desks selected
+            </span>
+          </div>
+
           <div className="flex flex-wrap gap-2">
             {markets.map((mkt) => {
               const isSelected = selectedMarketIds.includes(mkt.id);
@@ -371,8 +558,9 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
         </div>
       )}
 
-      {/* 3. Member Selection Table */}
-      <div className="border border-[#D9E0EA] rounded-xl overflow-hidden bg-white">
+      {/* 4. Contact Individuals Selection Table */}
+      <div className="border border-[#D9E0EA] rounded-xl overflow-hidden bg-white shadow-xs">
+        {/* Table Toolbar */}
         <div className="p-3 bg-[#F8FAFC] border-b border-[#D9E0EA] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="relative flex-1 max-w-sm">
             <Search className="w-4 h-4 text-[#667085] absolute left-3 top-2.5" />
@@ -385,30 +573,39 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSelectAll}
-              className="px-2.5 py-1 text-xs font-medium rounded-lg text-[#1455D9] hover:bg-[#EAF2FF]"
-            >
-              Select All
-            </button>
-            <span className="text-[#D9E0EA]">|</span>
-            <button
-              type="button"
-              onClick={handleDeselectAll}
-              className="px-2.5 py-1 text-xs font-medium rounded-lg text-[#667085] hover:bg-slate-100"
-            >
-              Deselect All
-            </button>
-          </div>
+          {scope === 'INDIVIDUALS' ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSelectAllVisible}
+                className="px-2.5 py-1 text-xs font-semibold rounded-lg text-[#1455D9] hover:bg-[#EAF2FF] transition-colors"
+              >
+                Select All
+              </button>
+              <span className="text-[#D9E0EA]">|</span>
+              <button
+                type="button"
+                onClick={handleDeselectAllVisible}
+                className="px-2.5 py-1 text-xs font-semibold rounded-lg text-[#667085] hover:bg-slate-100 transition-colors"
+              >
+                Deselect All
+              </button>
+            </div>
+          ) : (
+            <div className="text-xs text-[#667085] flex items-center gap-1">
+              <UserCheck className="w-3.5 h-3.5 text-[#1455D9]" />
+              <span>
+                {scope === 'COMPANY' ? 'Entire Company targeting active' : 'Market-based targeting active'}
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Member list */}
+        {/* Member List */}
         <div className="max-h-60 overflow-y-auto divide-y divide-[#D9E0EA]">
           {loading ? (
             <div className="p-6 text-center text-xs text-[#667085]">Loading contact members...</div>
-          ) : filteredMembers.length === 0 ? (
+          ) : visibleMembers.length === 0 ? (
             <div className="p-6 text-center text-xs text-[#667085] space-y-2">
               <p>No contact members found matching filters for {currentAgency?.name}.</p>
               <button
@@ -420,22 +617,40 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
               </button>
             </div>
           ) : (
-            filteredMembers.map((member) => {
-              const isSelected = selectedMemberIds.includes(member.id);
-              const hasEmail = Boolean(member.email);
+            visibleMembers.map((member) => {
+              const hasValidEmail = Boolean(member.email && EMAIL_REGEX.test(member.email.trim()));
+              const isEligible = hasValidEmail && member.status === 'ACTIVE';
+
+              // Selection status depends on current scope
+              let isSelected = false;
+              if (scope === 'COMPANY') {
+                isSelected = isEligible;
+              } else if (scope === 'MARKETS') {
+                isSelected = isEligible && Boolean(member.market_id && selectedMarketIds.includes(member.market_id));
+              } else {
+                isSelected = selectedMemberIds.includes(member.id);
+              }
 
               return (
                 <div
                   key={member.id}
-                  onClick={() => hasEmail && toggleMember(member.id)}
-                  className={`p-3 flex items-center justify-between gap-3 cursor-pointer hover:bg-slate-50 transition-colors ${
-                    !hasEmail ? 'opacity-50 cursor-not-allowed bg-slate-50' : isSelected ? 'bg-blue-50/40' : ''
-                  }`}
+                  onClick={() => {
+                    if (scope === 'INDIVIDUALS' && isEligible) {
+                      toggleIndividualMember(member.id);
+                    }
+                  }}
+                  className={`p-3 flex items-center justify-between gap-3 transition-colors ${
+                    !isEligible
+                      ? 'opacity-50 cursor-not-allowed bg-slate-50'
+                      : scope === 'INDIVIDUALS'
+                      ? 'cursor-pointer hover:bg-slate-50'
+                      : ''
+                  } ${isSelected && isEligible ? 'bg-blue-50/40' : ''}`}
                 >
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      disabled={!hasEmail}
+                      disabled={!isEligible || scope !== 'INDIVIDUALS'}
                       className="text-[#1455D9]"
                     >
                       {isSelected ? (
@@ -455,7 +670,14 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
                       </div>
                       <div className="text-[11px] text-[#667085] flex items-center gap-1.5 mt-0.5">
                         <Mail className="w-3 h-3 text-[#98A2B3]" />
-                        {member.email || <span className="text-amber-600 font-medium">No email address</span>}
+                        {hasValidEmail ? (
+                          <span>{member.email}</span>
+                        ) : (
+                          <span className="text-amber-600 font-medium flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            {member.email ? 'Invalid email format' : 'Missing email'}
+                          </span>
+                        )}
                         {member.market_name && (
                           <span className="px-1.5 py-0.2 rounded bg-slate-100 text-[10px] text-slate-700">
                             {member.market_name}
@@ -487,15 +709,43 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-[#1455D9]" />
             <span>
-              <strong>{selectedMemberIds.length}</strong> recipients selected for{' '}
+              <strong>{finalRecipients.length}</strong> unique recipients confirmed for{' '}
               <strong>{currentAgency?.name}</strong>
             </span>
           </div>
           <span className="text-[11px] text-emerald-700 flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5" /> Deduplication active
+            <ShieldCheck className="w-3.5 h-3.5" /> Deduplicated &amp; Validated
           </span>
         </div>
       </div>
+
+      {/* 5. Active Recipient Preview / Confirmation List */}
+      {finalRecipients.length > 0 && (
+        <div className="p-3.5 rounded-xl border border-blue-200 bg-blue-50/50 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-bold text-[#101828] flex items-center gap-1.5">
+              <Mail className="w-4 h-4 text-[#1455D9]" />
+              Confirmed Outgoing Recipient List ({finalRecipients.length})
+            </span>
+            <span className="text-[10px] font-semibold text-blue-700 uppercase bg-blue-100 px-2 py-0.5 rounded-full">
+              No auto-send on selection
+            </span>
+          </div>
+          <div className="max-h-24 overflow-y-auto space-y-1">
+            {finalRecipients.map((rec) => (
+              <div
+                key={rec.memberId}
+                className="text-[11px] text-slate-700 bg-white px-2.5 py-1 rounded border border-blue-100 flex items-center justify-between"
+              >
+                <span>
+                  <strong>{rec.fullName}</strong> {rec.designation ? `(${rec.designation})` : ''} — {rec.email}
+                </span>
+                <span className="text-[10px] text-slate-400">{rec.marketName || 'General Desk'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* QUICK ADD CONTACT MODAL */}
       {addContactModalOpen && (
