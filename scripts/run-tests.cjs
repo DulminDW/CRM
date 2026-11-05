@@ -431,6 +431,117 @@ function testRateCalculationSuite() {
   return { name: 'Flexible Rate Calculation Engine (Phase L 13 Scenarios)', status: 'PASS', totalTested: 13 };
 }
 
+// 7. Security Hardening Suite (Phase 6C Logic Tests)
+// Models the database trigger & policy rules introduced in migration 000012
+
+function simulateEnforceAuditActor(record, sessionUser) {
+  // If no authenticated session user
+  if (!sessionUser) {
+    // Unauthenticated client insert -> Denied by RLS (auth.uid() IS NOT NULL)
+    return { success: false, error: 'Audit insertion rejected: unauthenticated' };
+  }
+
+  // Active employee check
+  if (!sessionUser.is_active) {
+    return { success: false, error: 'Audit insertion rejected: authenticated actor is inactive or missing.' };
+  }
+
+  // Database trigger hardens actor_id: overrides whatever client supplied with sessionUser.id
+  const hardenedRecord = { ...record };
+  hardenedRecord.actor_id = sessionUser.id;
+
+  return { success: true, record: hardenedRecord };
+}
+
+function simulateEnforceRateSetupCreator(operation, currentRecord, incomingRecord, sessionUser, permissions) {
+  // Check permission: can_manage_rates
+  const canManageRates = sessionUser.role === 'ADMIN' || (permissions && permissions.includes('CAN_MANAGE_RATES'));
+  if (!canManageRates) {
+    return { success: false, error: 'Rate calculation setup modification denied: insufficient permissions.' };
+  }
+
+  if (operation === 'INSERT') {
+    // Hardens created_by strictly to session user ID
+    const hardened = { ...incomingRecord, created_by: sessionUser.id };
+    return { success: true, record: hardened };
+  }
+
+  if (operation === 'UPDATE') {
+    // Immutability check on created_by
+    if (incomingRecord.created_by && incomingRecord.created_by !== currentRecord.created_by) {
+      return { success: false, error: 'Security violation: created_by identity on rate_calculation_setups is immutable.' };
+    }
+    return { success: true, record: { ...currentRecord, ...incomingRecord, created_by: currentRecord.created_by } };
+  }
+
+  return { success: false, error: 'Unsupported operation' };
+}
+
+function testSecurityHardeningSuite() {
+  const adminUser = { id: 'admin-uuid-1', role: 'ADMIN', is_active: true };
+  const authorizedStaff = { id: 'staff-uuid-2', role: 'STAFF', is_active: true };
+  const unauthorizedStaff = { id: 'staff-uuid-3', role: 'STAFF', is_active: true };
+  const inactiveUser = { id: 'user-uuid-4', role: 'STAFF', is_active: false };
+  const victimAdminId = 'admin-victim-uuid';
+
+  // 1. Authenticated user inserting audit record with their own ID
+  const r1 = simulateEnforceAuditActor({ action: 'INSERT', actor_id: authorizedStaff.id }, authorizedStaff);
+  if (!r1.success || r1.record.actor_id !== authorizedStaff.id) {
+    throw new Error('Test 1 Failed: Legitimate audit insert failed');
+  }
+
+  // 2. User attempting to insert audit record with another user's ID (Spoofing attempt)
+  const r2 = simulateEnforceAuditActor({ action: 'INSERT', actor_id: victimAdminId }, authorizedStaff);
+  if (!r2.success || r2.record.actor_id === victimAdminId || r2.record.actor_id !== authorizedStaff.id) {
+    throw new Error('Test 2 Failed: Actor spoofing was not overridden by session uid');
+  }
+
+  // 3. Unauthenticated audit insertion
+  const r3 = simulateEnforceAuditActor({ action: 'INSERT', actor_id: 'any-id' }, null);
+  if (r3.success) {
+    throw new Error('Test 3 Failed: Unauthenticated insert unexpectedly succeeded');
+  }
+
+  // 4. Admin audit insertion
+  const r4 = simulateEnforceAuditActor({ action: 'PUBLISH', actor_id: adminUser.id }, adminUser);
+  if (!r4.success || r4.record.actor_id !== adminUser.id) {
+    throw new Error('Test 4 Failed: Admin audit insert failed');
+  }
+
+  // 5. Inactive staff audit insertion rejected
+  const r5 = simulateEnforceAuditActor({ action: 'INSERT', actor_id: inactiveUser.id }, inactiveUser);
+  if (r5.success) {
+    throw new Error('Test 5 Failed: Inactive staff insert unexpectedly succeeded');
+  }
+
+  // 6. Authorized Staff setup creation
+  const r6 = simulateEnforceRateSetupCreator('INSERT', null, { setup_name: 'Custom Setup' }, authorizedStaff, ['CAN_MANAGE_RATES']);
+  if (!r6.success || r6.record.created_by !== authorizedStaff.id) {
+    throw new Error('Test 6 Failed: Authorized staff setup creation failed');
+  }
+
+  // 7. Setup creator identity spoofing attempt on INSERT
+  const r7 = simulateEnforceRateSetupCreator('INSERT', null, { setup_name: 'Spoofed Setup', created_by: victimAdminId }, authorizedStaff, ['CAN_MANAGE_RATES']);
+  if (!r7.success || r7.record.created_by === victimAdminId || r7.record.created_by !== authorizedStaff.id) {
+    throw new Error('Test 7 Failed: Setup creator spoofing was not overridden');
+  }
+
+  // 8. Updating created_by after setup creation (Tampering attempt)
+  const currentSetup = { id: 'setup-100', setup_name: 'Legit Setup', created_by: authorizedStaff.id };
+  const r8 = simulateEnforceRateSetupCreator('UPDATE', currentSetup, { created_by: victimAdminId, setup_name: 'Renamed' }, authorizedStaff, ['CAN_MANAGE_RATES']);
+  if (r8.success) {
+    throw new Error('Test 8 Failed: Changing created_by on UPDATE should be rejected as immutable violation');
+  }
+
+  // 9. Unauthorized Staff audit / setup mutation rejection
+  const r9 = simulateEnforceRateSetupCreator('INSERT', null, { setup_name: 'Illegal Setup' }, unauthorizedStaff, []);
+  if (r9.success) {
+    throw new Error('Test 9 Failed: Unauthorized staff without CAN_MANAGE_RATES was not blocked');
+  }
+
+  return { name: 'Audit Actor & Setup Creator Identity Hardening (Phase 6C Logic)', status: 'PASS', totalTested: 9 };
+}
+
 // Run all test suites
 try {
   const results = [
@@ -439,7 +550,8 @@ try {
     testSeasonDateOverlapDetection(),
     testMemberHierarchyIntegrity(),
     testRecipientScopesResolution(),
-    testRateCalculationSuite()
+    testRateCalculationSuite(),
+    testSecurityHardeningSuite()
   ];
 
   console.log(JSON.stringify({ status: 'ALL_TESTS_PASSED', results }, null, 2));
