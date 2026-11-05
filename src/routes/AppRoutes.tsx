@@ -23,6 +23,7 @@ import { TeamChatPage } from '../pages/TeamChatPage';
 import { NotificationsPage } from '../pages/NotificationsPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { AdminActivityLogPage } from '../pages/AdminActivityLogPage';
 
 export const AppRoutes: React.FC = () => {
   return (
@@ -80,6 +81,14 @@ export const AppRoutes: React.FC = () => {
 
         {/* Intelligence & Administration */}
         <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route
+          path="/activity-log"
+          element={
+            <ProtectedRoute requiredRole="ADMIN">
+              <AdminActivityLogPage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Settings (Requires ADMIN role) */}
         <Route

@@ -203,6 +203,234 @@ function testRecipientScopesResolution() {
   return { name: 'Recipient Scopes Deduplication & Hierarchy Consistency', status: 'PASS', totalTested: 3 };
 }
 
+// 6. Comprehensive Rate Calculation Engine Tests (Phase L Suite)
+function createDefaultCalculationConfig() {
+  return {
+    anchorRowId: 'DBL',
+    anchorMealId: 'HB',
+    currency: 'USD',
+    decimalPrecision: 2,
+    roomRows: [
+      { id: 'SGL', label: 'Single', occupancyCount: 1, enabled: true, order: 1 },
+      { id: 'DBL', label: 'Double', occupancyCount: 2, enabled: true, order: 2 },
+      { id: 'TPL', label: 'Triple', occupancyCount: 3, enabled: true, order: 3 },
+      { id: 'QUAD', label: 'Quadruple', occupancyCount: 4, enabled: true, order: 4 }
+    ],
+    mealColumns: [
+      { id: 'BB', label: 'BB', enabled: true, order: 1 },
+      { id: 'HB', label: 'HB', enabled: true, order: 2 },
+      { id: 'FB', label: 'FB', enabled: true, order: 3 }
+    ],
+    occupancyAdjustments: {
+      SGL: { targetRowId: 'SGL', type: 'FIXED', direction: 'DEDUCT', scope: 'PER_ROOM', value: 10 },
+      TPL: { targetRowId: 'TPL', type: 'FIXED', direction: 'ADD', scope: 'PER_ROOM', value: 25 },
+      QUAD: { targetRowId: 'QUAD', type: 'FIXED', direction: 'ADD', scope: 'PER_ROOM', value: 50 }
+    },
+    mealAdjustments: {
+      BB: { targetMealId: 'BB', type: 'FIXED', direction: 'DEDUCT', scope: 'PER_ROOM', value: 10 },
+      FB: { targetMealId: 'FB', type: 'FIXED', direction: 'ADD', scope: 'PER_ROOM', value: 15 }
+    }
+  };
+}
+
+function calculateRateGrid(anchorValue, config, existingCells = {}) {
+  const result = {};
+  const anchorRow = config.anchorRowId;
+  const anchorMeal = config.anchorMealId;
+  const enabledRows = config.roomRows.filter((r) => r.enabled);
+  const enabledMeals = config.mealColumns.filter((m) => m.enabled);
+
+  if (anchorValue === null || isNaN(anchorValue) || anchorValue <= 0) {
+    for (const r of enabledRows) {
+      for (const m of enabledMeals) {
+        const key = `${r.id}:${m.id}`;
+        const existing = existingCells[key];
+        if (existing && existing.status === 'MANUAL_OVERRIDE') {
+          result[key] = { ...existing };
+        } else {
+          result[key] = { rowId: r.id, mealId: m.id, value: null, status: 'NOT_CONFIGURED' };
+        }
+      }
+    }
+    return result;
+  }
+
+  const rowAnchorValues = {};
+  rowAnchorValues[anchorRow] = { value: anchorValue };
+
+  for (const r of enabledRows) {
+    if (r.id === anchorRow) continue;
+    const rule = config.occupancyAdjustments[r.id];
+    if (!rule || rule.value === undefined || rule.value === null) continue;
+
+    let step = rule.type === 'PERCENTAGE' ? (anchorValue * rule.value) / 100 : rule.value;
+    let calculated = rule.direction === 'ADD' ? anchorValue + step : anchorValue - step;
+    rowAnchorValues[r.id] = { value: Number(calculated.toFixed(config.decimalPrecision ?? 2)) };
+  }
+
+  for (const r of enabledRows) {
+    const baseObj = rowAnchorValues[r.id];
+    for (const m of enabledMeals) {
+      const key = `${r.id}:${m.id}`;
+      const existing = existingCells[key];
+
+      if (existing && existing.status === 'MANUAL_OVERRIDE') {
+        result[key] = { ...existing };
+        continue;
+      }
+
+      if (r.id === anchorRow && m.id === anchorMeal) {
+        result[key] = { rowId: r.id, mealId: m.id, value: anchorValue, status: 'ANCHOR_INPUT' };
+        continue;
+      }
+
+      if (!baseObj) {
+        result[key] = { rowId: r.id, mealId: m.id, value: null, status: 'NOT_CONFIGURED' };
+        continue;
+      }
+
+      if (m.id === anchorMeal) {
+        result[key] = { rowId: r.id, mealId: m.id, value: baseObj.value, status: 'AUTO_CALCULATED' };
+        continue;
+      }
+
+      const mealRule = config.mealAdjustments[m.id];
+      if (!mealRule || mealRule.value === undefined || mealRule.value === null) {
+        result[key] = { rowId: r.id, mealId: m.id, value: null, status: 'NOT_CONFIGURED' };
+        continue;
+      }
+
+      let diff = 0;
+      if (mealRule.type === 'PERCENTAGE') {
+        diff = (baseObj.value * mealRule.value) / 100;
+      } else {
+        diff = mealRule.scope === 'PER_PERSON' ? mealRule.value * r.occupancyCount : mealRule.value;
+      }
+
+      const finalVal = mealRule.direction === 'ADD' ? baseObj.value + diff : baseObj.value - diff;
+      result[key] = {
+        rowId: r.id,
+        mealId: m.id,
+        value: Number(finalVal.toFixed(config.decimalPrecision ?? 2)),
+        status: 'AUTO_CALCULATED'
+      };
+    }
+  }
+
+  return result;
+}
+
+function testRateCalculationSuite() {
+  const config = createDefaultCalculationConfig();
+
+  // Test 1: Double HB Anchor ($100)
+  const grid1 = calculateRateGrid(100, config);
+  if (grid1['DBL:HB'].value !== 100 || grid1['DBL:HB'].status !== 'ANCHOR_INPUT') {
+    throw new Error('Test 1 Failed: Anchor Double HB calculation mismatch');
+  }
+
+  // Test 2: Single Deduction ($10 deduction -> $90 Single HB)
+  if (grid1['SGL:HB'].value !== 90 || grid1['SGL:HB'].status !== 'AUTO_CALCULATED') {
+    throw new Error('Test 2 Failed: Single HB deduction mismatch');
+  }
+
+  // Test 3: Triple Supplement (+$25 -> $125 Triple HB)
+  if (grid1['TPL:HB'].value !== 125 || grid1['TPL:HB'].status !== 'AUTO_CALCULATED') {
+    throw new Error('Test 3 Failed: Triple HB supplement mismatch');
+  }
+
+  // Test 4: Quadruple Configured Adjustment (+$50 -> $150 Quad HB)
+  if (grid1['QUAD:HB'].value !== 150 || grid1['QUAD:HB'].status !== 'AUTO_CALCULATED') {
+    throw new Error('Test 4 Failed: Quadruple HB adjustment mismatch');
+  }
+
+  // Test 5: BB Adjustment ($10 deduction -> $90 DBL BB, $80 SGL BB)
+  if (grid1['DBL:BB'].value !== 90 || grid1['SGL:BB'].value !== 80) {
+    throw new Error('Test 5 Failed: BB adjustment mismatch');
+  }
+
+  // Test 6: FB Adjustment (+$15 supplement -> $115 DBL FB, $140 TPL FB)
+  if (grid1['DBL:FB'].value !== 115 || grid1['TPL:FB'].value !== 140) {
+    throw new Error('Test 6 Failed: FB adjustment mismatch');
+  }
+
+  // Test 7: Percentage Calculation (10% single discount on $200 -> $180)
+  const configPercent = createDefaultCalculationConfig();
+  configPercent.occupancyAdjustments.SGL = {
+    targetRowId: 'SGL',
+    type: 'PERCENTAGE',
+    direction: 'DEDUCT',
+    scope: 'PER_ROOM',
+    value: 10
+  };
+  const gridPct = calculateRateGrid(200, configPercent);
+  if (gridPct['SGL:HB'].value !== 180) {
+    throw new Error('Test 7 Failed: Percentage adjustment calculation mismatch');
+  }
+
+  // Test 8: Manual Override Preservation
+  const existingWithOverride = {
+    'DBL:FB': { rowId: 'DBL', mealId: 'FB', value: 135, status: 'MANUAL_OVERRIDE' }
+  };
+  const gridOverride = calculateRateGrid(100, config, existingWithOverride);
+  if (gridOverride['DBL:FB'].value !== 135 || gridOverride['DBL:FB'].status !== 'MANUAL_OVERRIDE') {
+    throw new Error('Test 8 Failed: Manual override was not preserved');
+  }
+
+  // Test 9: Reset to Auto (omitting override resets it back to 115)
+  const gridReset = calculateRateGrid(100, config, {});
+  if (gridReset['DBL:FB'].value !== 115 || gridReset['DBL:FB'].status !== 'AUTO_CALCULATED') {
+    throw new Error('Test 9 Failed: Reset to auto failed');
+  }
+
+  // Test 10: Missing Adjustment Graceful Handling (Not Configured)
+  const configMissing = createDefaultCalculationConfig();
+  delete configMissing.occupancyAdjustments.QUAD;
+  const gridMissing = calculateRateGrid(100, configMissing);
+  if (gridMissing['QUAD:HB'].value !== null || gridMissing['QUAD:HB'].status !== 'NOT_CONFIGURED') {
+    throw new Error('Test 10 Failed: Missing adjustment did not yield NOT_CONFIGURED');
+  }
+
+  // Test 11: Missing Anchor Graceful Handling
+  const gridNoAnchor = calculateRateGrid(null, config);
+  if (gridNoAnchor['DBL:HB'].value !== null || gridNoAnchor['DBL:HB'].status !== 'NOT_CONFIGURED') {
+    throw new Error('Test 11 Failed: Missing anchor did not yield NOT_CONFIGURED');
+  }
+
+  // Test 12: Decimal Precision ($100.55 anchor with 15% supplement -> 115.63)
+  const configPrec = createDefaultCalculationConfig();
+  configPrec.decimalPrecision = 2;
+  configPrec.mealAdjustments.FB = {
+    targetMealId: 'FB',
+    type: 'PERCENTAGE',
+    direction: 'ADD',
+    scope: 'PER_ROOM',
+    value: 15
+  };
+  const gridPrec = calculateRateGrid(100.55, configPrec);
+  if (gridPrec['DBL:FB'].value !== 115.63) {
+    throw new Error(`Test 12 Failed: Expected 115.63, got ${gridPrec['DBL:FB'].value}`);
+  }
+
+  // Test 13: Per-Person Supplement Scaling (FB $15 per person -> Single FB is +$15, Triple FB is +$45)
+  const configPerPerson = createDefaultCalculationConfig();
+  configPerPerson.mealAdjustments.FB = {
+    targetMealId: 'FB',
+    type: 'FIXED',
+    direction: 'ADD',
+    scope: 'PER_PERSON',
+    value: 15
+  };
+  const gridPP = calculateRateGrid(100, configPerPerson);
+  // SGL base = 90 + (1 pax * 15) = 105
+  // TPL base = 125 + (3 pax * 15) = 170
+  if (gridPP['SGL:FB'].value !== 105 || gridPP['TPL:FB'].value !== 170) {
+    throw new Error('Test 13 Failed: Per-person meal supplement scaling mismatch');
+  }
+
+  return { name: 'Flexible Rate Calculation Engine (Phase L 13 Scenarios)', status: 'PASS', totalTested: 13 };
+}
+
 // Run all test suites
 try {
   const results = [
@@ -210,7 +438,8 @@ try {
     testSeasonDateValidation(),
     testSeasonDateOverlapDetection(),
     testMemberHierarchyIntegrity(),
-    testRecipientScopesResolution()
+    testRecipientScopesResolution(),
+    testRateCalculationSuite()
   ];
 
   console.log(JSON.stringify({ status: 'ALL_TESTS_PASSED', results }, null, 2));

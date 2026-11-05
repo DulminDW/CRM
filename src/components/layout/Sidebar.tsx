@@ -17,6 +17,7 @@ import {
   Bell,
   BarChart3,
   Settings,
+  ShieldAlert,
   X,
   ShieldCheck,
 } from 'lucide-react';
@@ -51,6 +52,7 @@ const NAV_ITEMS: SidebarItem[] = [
   { section: 'Communication', name: 'Notifications', path: '/notifications', icon: Bell },
 
   { section: 'Intelligence & Admin', name: 'Analytics & Reports', path: '/analytics', icon: BarChart3 },
+  { section: 'Intelligence & Admin', name: 'Admin Activity Log', path: '/activity-log', icon: ShieldAlert, requiredRole: 'ADMIN' },
   { section: 'Intelligence & Admin', name: 'Settings', path: '/settings', icon: Settings, requiredRole: 'ADMIN' },
 ];
 
