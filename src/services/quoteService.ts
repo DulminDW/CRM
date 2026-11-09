@@ -4,6 +4,9 @@ import { SelectedRecipient } from '../components/rates/RecipientSelector';
 export interface SavedQuoteItem {
   hotel_id: string;
   season_id: string;
+  contract_id?: string | null;
+  contract_version_id?: string | null;
+  contract_reference_snapshot?: string | null;
   rate_sheet_id?: string | null;
   hotel_name_snapshot: string;
   season_label_snapshot: string;
@@ -43,6 +46,9 @@ export interface QuoteItemSnapshot {
   quote_id: string;
   hotel_id: string;
   season_id: string;
+  contract_id?: string | null;
+  contract_version_id?: string | null;
+  contract_reference_snapshot?: string | null;
   rate_sheet_id?: string | null;
   hotel_name_snapshot: string;
   season_label_snapshot: string;
@@ -148,6 +154,9 @@ export const quoteService = {
         quote_id: quote.id,
         hotel_id: item.hotel_id,
         season_id: item.season_id,
+        contract_id: item.contract_id || null,
+        contract_version_id: item.contract_version_id || null,
+        contract_reference_snapshot: item.contract_reference_snapshot || null,
         rate_sheet_id: item.rate_sheet_id || null,
         hotel_name_snapshot: item.hotel_name_snapshot,
         season_label_snapshot: item.season_label_snapshot,

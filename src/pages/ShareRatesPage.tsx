@@ -264,7 +264,19 @@ export const ShareRatesPage: React.FC = () => {
 
         ${selectedContract ? `
           <div style="background: #F0F9FF; border: 1px solid #B9E6FE; padding: 10px; border-radius: 8px; margin-bottom: 12px; font-size: 12px; color: #026AA2;">
-            <strong>Contract Reference:</strong> ${selectedContract.contract_reference} — ${selectedContract.contract_name} (Valid: ${selectedContract.valid_from} to ${selectedContract.valid_to})
+            <strong>Contract Reference:</strong> ${selectedContract.contract_reference} (v${selectedContract.version_number}.0) — ${selectedContract.contract_name} (Valid: ${selectedContract.valid_from} to ${selectedContract.valid_to})
+          </div>
+        ` : ''}
+
+        ${selectedContract && selectedContract.conditions && selectedContract.conditions.filter((c) => !c.is_internal_only).length > 0 ? `
+          <div style="margin-bottom: 12px; font-size: 12px;">
+            <p style="margin-bottom: 4px; font-weight: bold; color: #101828;">Contract Terms &amp; Policies:</p>
+            <ul style="margin: 0; padding-left: 20px; color: #344054;">
+              ${selectedContract.conditions
+                .filter((c) => !c.is_internal_only)
+                .map((c) => `<li><strong>${c.condition_title}:</strong> ${c.condition_description}</li>`)
+                .join('')}
+            </ul>
           </div>
         ` : ''}
 
@@ -331,6 +343,9 @@ export const ShareRatesPage: React.FC = () => {
         {
           hotel_id: selectedHotelId,
           season_id: selectedSeasonId,
+          contract_id: selectedContract?.id || null,
+          contract_version_id: selectedContract?.versions?.[0]?.id || null,
+          contract_reference_snapshot: selectedContract ? `${selectedContract.contract_reference} (v${selectedContract.version_number}.0)` : null,
           rate_sheet_id: activeRateSheet?.id || null,
           hotel_name_snapshot: selectedHotel?.hotel_name || 'Hotel',
           season_label_snapshot: selectedSeason?.season_label || 'Season',

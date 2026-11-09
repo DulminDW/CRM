@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import {
@@ -8,6 +8,7 @@ import {
   Users2,
   Hotel,
   CalendarDays,
+  FileText,
   Percent,
   Sparkles,
   Calculator,
@@ -41,6 +42,7 @@ const NAV_ITEMS: SidebarItem[] = [
 
   { section: 'Hotels & Pricing', name: 'Hotels', path: '/hotels', icon: Hotel },
   { section: 'Hotels & Pricing', name: 'Hotel Seasons', path: '/seasons', icon: CalendarDays },
+  { section: 'Hotels & Pricing', name: 'Contracts', path: '/contracts', icon: FileText },
   { section: 'Hotels & Pricing', name: 'Rate Management', path: '/rates', icon: Percent, requiredPermission: 'CAN_MANAGE_RATES' },
   { section: 'Hotels & Pricing', name: 'Special Rates', path: '/special-rates', icon: Sparkles, badge: '1-3', requiredPermission: 'CAN_MANAGE_RATES' },
   { section: 'Hotels & Pricing', name: 'Rate Calculator', path: '/calculator', icon: Calculator },
@@ -64,6 +66,18 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { profile, hasPermission } = useAuth();
   const isAdmin = profile?.role === 'ADMIN';
+
+  // Prevent background scrolling on mobile when sidebar drawer is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
 
   const filteredItems = NAV_ITEMS.filter((item) => {
     if (item.requiredRole === 'ADMIN' && !isAdmin) return false;
@@ -108,7 +122,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
           <button
             onClick={onClose}
-            className="lg:hidden p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10"
+            className="lg:hidden p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-white/60 hover:text-white hover:bg-white/10 touch-manipulation"
             aria-label="Close menu"
           >
             <X className="w-5 h-5" />
@@ -134,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                       onClick={onClose}
                       end={item.path === '/'}
                       className={({ isActive }) =>
-                        `flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                        `flex items-center justify-between px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-semibold transition-all touch-manipulation ${
                           isActive
                             ? 'bg-[#1455D9] text-white shadow-md shadow-[#1455D9]/30 font-bold'
                             : 'text-[#EAF2FF]/80 hover:text-white hover:bg-[#0D3874]/60'

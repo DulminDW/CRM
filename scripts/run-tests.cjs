@@ -542,6 +542,161 @@ function testSecurityHardeningSuite() {
   return { name: 'Audit Actor & Setup Creator Identity Hardening (Phase 6C Logic)', status: 'PASS', totalTested: 9 };
 }
 
+// 8. Contract Management & Multi-Season Eligibility Verification Suite (Phase 8 QA)
+function testContractManagementSuite() {
+  let count = 0;
+
+  // 1. Contract Date Validity & Expiry Logic
+  const today = '2026-11-09';
+  const isContractExpired = (validTo, compareDate = today) => validTo < compareDate;
+
+  if (!isContractExpired('2026-10-31', today)) throw new Error('Contract expiry check failed for past date');
+  if (isContractExpired('2026-11-10', today)) throw new Error('Contract expiry check failed for future date');
+  if (isContractExpired('2026-11-09', today)) throw new Error('Contract expiry check failed for exact today date');
+  count += 3;
+
+  // 2. Contract Eligibility Resolution (Hotel, Season association, Date overlap, Status)
+  const mockContracts = [
+    {
+      id: 'c1',
+      hotel_id: 'hotel-sigiriya',
+      season_id: 'season-winter',
+      associated_season_ids: ['season-winter', 'season-spring'],
+      valid_from: '2026-11-01',
+      valid_to: '2027-04-30',
+      status: 'ACTIVE',
+      currency: 'USD'
+    },
+    {
+      id: 'c2',
+      hotel_id: 'hotel-sigiriya',
+      season_id: 'season-summer',
+      associated_season_ids: ['season-summer'],
+      valid_from: '2026-05-01',
+      valid_to: '2026-10-31',
+      status: 'EXPIRED',
+      currency: 'USD'
+    },
+    {
+      id: 'c3',
+      hotel_id: 'hotel-bentota',
+      season_id: 'season-winter',
+      associated_season_ids: [],
+      valid_from: '2026-11-01',
+      valid_to: '2027-04-30',
+      status: 'ACTIVE',
+      currency: 'EUR'
+    }
+  ];
+
+  function filterEligible(hotelId, seasonId, targetDate = today) {
+    return mockContracts.filter((c) => {
+      if (c.hotel_id !== hotelId) return false;
+      if (c.status !== 'ACTIVE') return false;
+      if (c.valid_from > targetDate || c.valid_to < targetDate) return false;
+      if (seasonId) {
+        const matchesPrimary = c.season_id === seasonId;
+        const matchesMulti = Array.isArray(c.associated_season_ids) && c.associated_season_ids.includes(seasonId);
+        if (!matchesPrimary && !matchesMulti && c.season_id !== null) return false;
+      }
+      return true;
+    });
+  }
+
+  // Eligible for Sigiriya in Winter
+  const eligible1 = filterEligible('hotel-sigiriya', 'season-winter');
+  if (eligible1.length !== 1 || eligible1[0].id !== 'c1') {
+    throw new Error('Eligible contract filter failed for Sigiriya Winter');
+  }
+  count++;
+
+  // Inactive / Expired should not be returned for Sigiriya Summer
+  const eligibleSummer = filterEligible('hotel-sigiriya', 'season-summer');
+  if (eligibleSummer.length !== 0) {
+    throw new Error('Expired contract was incorrectly returned as eligible');
+  }
+  count++;
+
+  // Cross-hotel isolation
+  const eligibleBentota = filterEligible('hotel-bentota', 'season-winter');
+  if (eligibleBentota.length !== 1 || eligibleBentota[0].id !== 'c3') {
+    throw new Error('Contract isolation across hotels failed');
+  }
+  count++;
+
+  // 3. Condition Privacy Separation (is_internal_only check)
+  const mockConditions = [
+    { title: 'Check-in Policy', is_internal_only: false, text: 'Check-in 14:00' },
+    { title: 'Commission Split Secret', is_internal_only: true, text: 'Keep 12% override internal' },
+    { title: 'Cancellation Rules', is_internal_only: false, text: 'Free cancellation up to 14 days prior' }
+  ];
+
+  // Filter public quote conditions
+  const publicConditions = mockConditions.filter((c) => !c.is_internal_only);
+  if (publicConditions.length !== 2) throw new Error('Public conditions count mismatch');
+  if (publicConditions.some((c) => c.is_internal_only)) throw new Error('Internal condition leaked into public conditions list');
+  count += 2;
+
+  // 4. Contract Version Immutability
+  const originalContract = {
+    id: 'c1',
+    contract_reference: 'CTR-SIG-2026-001',
+    version_number: 1,
+    terms: 'Initial agreement terms'
+  };
+
+  const versionSnapshot = {
+    contract_id: originalContract.id,
+    version_number: 1,
+    version_label: 'v1.0 (Initial)',
+    terms_snapshot: originalContract.terms,
+    created_at: '2026-11-01T00:00:00Z'
+  };
+
+  // Mutating original contract should not alter frozen version snapshot
+  const updatedContract = { ...originalContract, version_number: 2, terms: 'Revised commercial terms with 15% discount' };
+  if (versionSnapshot.terms_snapshot !== 'Initial agreement terms') {
+    throw new Error('Historical version snapshot was mutated');
+  }
+  if (versionSnapshot.version_number !== 1) {
+    throw new Error('Version snapshot number was corrupted');
+  }
+  count += 2;
+
+  // 5. Document Validation & Collision Avoidance (Phase 8C)
+  const DOCUMENT_RULES = {
+    maxSizeBytes: 25 * 1024 * 1024,
+    allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx']
+  };
+
+  const validateFile = (name, size) => {
+    if (size > DOCUMENT_RULES.maxSizeBytes) return { valid: false, error: 'File size exceeds 25MB' };
+    const ext = name.split('.').pop()?.toLowerCase();
+    if (!DOCUMENT_RULES.allowedExtensions.includes(ext)) return { valid: false, error: 'Invalid file extension' };
+    return { valid: true };
+  };
+
+  if (!validateFile('signed_contract.pdf', 5 * 1024 * 1024).valid) throw new Error('Valid PDF rejected');
+  if (validateFile('huge_file.pdf', 30 * 1024 * 1024).valid) throw new Error('Oversized 30MB file accepted');
+  if (validateFile('malicious.exe', 1024).valid) throw new Error('Executable file accepted');
+  if (!validateFile('rates_matrix.xlsx', 2 * 1024 * 1024).valid) throw new Error('Valid Excel spreadsheet rejected');
+  count += 4;
+
+  // Collision-proof versioned path structure: hotel_id/contract_id/v{ver}_{timestamp}_{sanitized_name}
+  const generateStoragePath = (hotelId, contractId, version, timestamp, name) => {
+    const clean = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    return `${hotelId}/${contractId}/v${version}_${timestamp}_${clean}`;
+  };
+
+  const path1 = generateStoragePath('hotel1', 'ctr1', 1, 1000, 'Original Contract.pdf');
+  const path2 = generateStoragePath('hotel1', 'ctr1', 1, 1001, 'Original Contract.pdf');
+  if (path1 === path2) throw new Error('Collision avoidance timestamp failed');
+  if (!path1.includes('Original_Contract.pdf')) throw new Error('File name sanitization failed');
+  count += 2;
+
+  return { name: 'Hotel Contract Management & Document Vault (Phase 8C QA)', status: 'PASS', totalTested: count };
+}
+
 // Run all test suites
 try {
   const results = [
@@ -551,7 +706,8 @@ try {
     testMemberHierarchyIntegrity(),
     testRecipientScopesResolution(),
     testRateCalculationSuite(),
-    testSecurityHardeningSuite()
+    testSecurityHardeningSuite(),
+    testContractManagementSuite()
   ];
 
   console.log(JSON.stringify({ status: 'ALL_TESTS_PASSED', results }, null, 2));

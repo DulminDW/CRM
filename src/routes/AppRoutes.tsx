@@ -14,6 +14,7 @@ import { MarketsPage } from '../pages/MarketsPage';
 import { MembersPage } from '../pages/MembersPage';
 import { HotelsPage } from '../pages/HotelsPage';
 import { HotelSeasonsPage } from '../pages/HotelSeasonsPage';
+import { ContractsPage } from '../pages/ContractsPage';
 import { RateManagementPage } from '../pages/RateManagementPage';
 import { SpecialRatesPage } from '../pages/SpecialRatesPage';
 import { RateCalculatorPage } from '../pages/RateCalculatorPage';
@@ -51,6 +52,7 @@ export const AppRoutes: React.FC = () => {
         {/* Hotels & Pricing */}
         <Route path="/hotels" element={<HotelsPage />} />
         <Route path="/seasons" element={<HotelSeasonsPage />} />
+        <Route path="/contracts" element={<ContractsPage />} />
 
         {/* Rate Management (Requires CAN_MANAGE_RATES permission or ADMIN) */}
         <Route
