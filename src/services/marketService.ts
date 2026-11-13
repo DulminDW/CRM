@@ -109,6 +109,21 @@ export async function createMarket(input: CreateMarketInput): Promise<{ data: Ag
   }
 
   try {
+    // Proactively check for duplicate market under the same agency case-insensitively
+    const { data: existing } = await supabase
+      .from('agency_markets')
+      .select('id, market_name')
+      .eq('agency_id', input.agency_id)
+      .ilike('market_name', trimmedName)
+      .maybeSingle();
+
+    if (existing) {
+      return {
+        data: null,
+        error: `A market named "${existing.market_name}" already exists under this agency.`,
+      };
+    }
+
     const { data, error } = await supabase
       .from('agency_markets')
       .insert({
@@ -173,6 +188,31 @@ export async function updateMarket(id: string, input: UpdateMarketInput): Promis
   }
 
   try {
+    if (input.market_name) {
+      const { data: current } = await supabase
+        .from('agency_markets')
+        .select('agency_id')
+        .eq('id', id)
+        .single();
+
+      if (current) {
+        const { data: existing } = await supabase
+          .from('agency_markets')
+          .select('id, market_name')
+          .eq('agency_id', current.agency_id)
+          .ilike('market_name', input.market_name.trim())
+          .neq('id', id)
+          .maybeSingle();
+
+        if (existing) {
+          return {
+            data: null,
+            error: `Another market named "${existing.market_name}" already exists under this agency.`,
+          };
+        }
+      }
+    }
+
     const { data, error } = await supabase
       .from('agency_markets')
       .update(updates)
