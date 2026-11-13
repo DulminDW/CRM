@@ -10,8 +10,10 @@ export interface TravelAgencyRecord {
   code: string | null;
   country: string | null;
   city: string | null;
+  address?: string | null;
   phone: string | null;
   email: string | null;
+  internal_notes?: string | null;
   status: RecordStatus;
   created_at: string;
   updated_at: string;

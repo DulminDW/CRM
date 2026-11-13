@@ -6,8 +6,6 @@
 --   Ensures new employees created via provision_company_employee have empty-string
 --   tokens ('') rather than NULL in auth.users, matching Supabase Auth GoTrue 
 --   Postgres schema expectations (avoiding "Database error querying schema" on login).
---   Note: confirmed_at is GENERATED ALWAYS AS (LEAST(email_confirmed_at, phone_confirmed_at)),
---   so it must NOT be specified in INSERT column lists.
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.provision_company_employee(
@@ -93,6 +91,7 @@ BEGIN
             email,
             encrypted_password,
             email_confirmed_at,
+            confirmed_at,
             confirmation_token,
             recovery_token,
             email_change,
@@ -112,6 +111,7 @@ BEGIN
             'authenticated',
             p_email,
             v_encrypted_pw,
+            v_now,
             v_now,
             '',
             '',
@@ -178,3 +178,4 @@ END;
 $$;
 
 NOTIFY pgrst, 'reload schema';
+

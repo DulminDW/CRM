@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   Mail,
@@ -16,8 +16,7 @@ import {
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const location = useLocation();
-  const { signInWithEmail } = useAuth();
+  const { signInWithEmail, session, profile } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -26,8 +25,12 @@ export const LoginPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const stateLocation = location.state as { from?: { pathname?: string } } | null;
-  const from = stateLocation?.from?.pathname || '/';
+  // If already authenticated and profile loaded, redirect directly to dashboard
+  React.useEffect(() => {
+    if (session && profile) {
+      navigate('/', { replace: true });
+    }
+  }, [session, profile, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,7 +54,8 @@ export const LoginPage: React.FC = () => {
       if (error) {
         setErrorMessage(error.message || 'Invalid email or password.');
       } else {
-        navigate(from, { replace: true });
+        // Direct redirection to the main Dashboard
+        navigate('/', { replace: true });
       }
     } catch {
       setErrorMessage('An unexpected error occurred. Please check your network connection.');

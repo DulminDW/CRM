@@ -16,7 +16,10 @@ import {
   RefreshCw,
   X,
   ExternalLink,
-  History
+  History,
+  Eye,
+  FileText,
+  Sparkles
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -43,12 +46,15 @@ export const TravelAgenciesPage: React.FC = () => {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingAgency, setEditingAgency] = useState<TravelAgencyRecord | null>(null);
+  const [viewingAgency, setViewingAgency] = useState<TravelAgencyRecord | null>(null);
   const [formName, setFormName] = useState<string>('');
   const [formCode, setFormCode] = useState<string>('');
   const [formCountry, setFormCountry] = useState<string>('');
   const [formCity, setFormCity] = useState<string>('');
+  const [formAddress, setFormAddress] = useState<string>('');
   const [formPhone, setFormPhone] = useState<string>('');
   const [formEmail, setFormEmail] = useState<string>('');
+  const [formInternalNotes, setFormInternalNotes] = useState<string>('');
   const [formStatus, setFormStatus] = useState<RecordStatus>('ACTIVE');
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -100,8 +106,10 @@ export const TravelAgenciesPage: React.FC = () => {
     setFormCode('');
     setFormCountry('');
     setFormCity('');
+    setFormAddress('');
     setFormPhone('');
     setFormEmail('');
+    setFormInternalNotes('');
     setFormStatus('ACTIVE');
     setFormError(null);
     setIsModalOpen(true);
@@ -113,8 +121,10 @@ export const TravelAgenciesPage: React.FC = () => {
     setFormCode(agency.code || '');
     setFormCountry(agency.country || '');
     setFormCity(agency.city || '');
+    setFormAddress(agency.address || '');
     setFormPhone(agency.phone || '');
     setFormEmail(agency.email || '');
+    setFormInternalNotes(agency.internal_notes || '');
     setFormStatus(agency.status);
     setFormError(null);
     setIsModalOpen(true);
@@ -142,8 +152,10 @@ export const TravelAgenciesPage: React.FC = () => {
         code: formCode,
         country: formCountry,
         city: formCity,
+        address: formAddress,
         phone: formPhone,
         email: formEmail,
+        internal_notes: formInternalNotes,
         status: formStatus,
       });
 
@@ -163,8 +175,10 @@ export const TravelAgenciesPage: React.FC = () => {
         code: formCode,
         country: formCountry,
         city: formCity,
+        address: formAddress,
         phone: formPhone,
         email: formEmail,
+        internal_notes: formInternalNotes,
         status: formStatus,
       };
 
@@ -458,6 +472,13 @@ export const TravelAgenciesPage: React.FC = () => {
                     {/* Actions */}
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => setViewingAgency(agency)}
+                          className="p-1.5 text-slate-500 hover:text-navy-900 hover:bg-slate-100 rounded-lg transition-colors"
+                          title="View Full Agency Profile"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
                         <Link
                           to={`/rates?agencyId=${agency.id}&tab=HISTORY`}
                           className="p-1.5 text-slate-500 hover:text-[#1455D9] hover:bg-blue-50 rounded-lg transition-colors"
@@ -614,6 +635,32 @@ export const TravelAgenciesPage: React.FC = () => {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                  Physical / Office Address
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. No. 46/38, Nawam Mawatha, Colombo 02"
+                  value={formAddress}
+                  onChange={(e) => setFormAddress(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-navy-600/20 focus:border-navy-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                  Internal Notes (Confidential)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Internal commercial terms, preferential treatment or partnership notes..."
+                  value={formInternalNotes}
+                  onChange={(e) => setFormInternalNotes(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-navy-600/20 focus:border-navy-600"
+                />
+              </div>
+
               <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-200">
                 <button
                   type="button"
@@ -688,6 +735,203 @@ export const TravelAgenciesPage: React.FC = () => {
                 {isDeleting && <RefreshCw className="w-4 h-4 animate-spin" />}
                 Delete Permanently
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW AGENCY PROFILE DRAWER / MODAL */}
+      {viewingAgency && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-950/40 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white w-full max-w-2xl rounded-2xl border border-slate-200 shadow-xl overflow-hidden animate-scale-up max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="px-6 py-5 bg-gradient-to-r from-navy-900 to-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/10 rounded-xl backdrop-blur-sm border border-white/10">
+                  <Building2 className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-lg text-white">{viewingAgency.name}</h3>
+                    {viewingAgency.code && (
+                      <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded font-mono font-semibold">
+                        {viewingAgency.code}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-300">Master Partner Travel Agency Profile</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setViewingAgency(null)}
+                className="p-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-6 overflow-y-auto flex-1 text-sm">
+              {/* Agency Overview Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div>
+                  <span className="text-xs text-slate-500 font-medium block">Account Status</span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold mt-1 border ${
+                      viewingAgency.status === 'ACTIVE'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-slate-200 text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        viewingAgency.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-slate-500'
+                      }`}
+                    />
+                    {viewingAgency.status}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-500 font-medium block">Country / Market</span>
+                  <span className="font-semibold text-slate-900 mt-0.5 block">
+                    {viewingAgency.country || 'Not specified'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-500 font-medium block">City / Territory</span>
+                  <span className="font-semibold text-slate-900 mt-0.5 block">
+                    {viewingAgency.city || 'Not specified'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-500 font-medium block">Official Email</span>
+                  <span className="font-semibold text-slate-900 mt-0.5 block break-all">
+                    {viewingAgency.email ? (
+                      <a href={`mailto:${viewingAgency.email}`} className="text-blue-600 hover:underline">
+                        {viewingAgency.email}
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-500 font-medium block">Direct Phone</span>
+                  <span className="font-semibold text-slate-900 mt-0.5 block">
+                    {viewingAgency.phone || '—'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs text-slate-500 font-medium block">Internal Agency ID</span>
+                  <span className="font-mono text-xs text-slate-600 mt-0.5 block">
+                    {viewingAgency.id.slice(0, 13)}...
+                  </span>
+                </div>
+              </div>
+
+              {/* Physical Address */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                  Physical / Office Address
+                </h4>
+                <p className="text-slate-800 bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs leading-relaxed">
+                  {viewingAgency.address || 'No physical address specified for this agency profile.'}
+                </p>
+              </div>
+
+              {/* Internal Confidential Notes */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-slate-500" />
+                  Internal CRM Notes (Confidential)
+                </h4>
+                <p className="text-slate-800 bg-amber-50/60 p-3 rounded-lg border border-amber-200/80 text-xs leading-relaxed">
+                  {viewingAgency.internal_notes || 'No confidential internal notes recorded yet.'}
+                </p>
+              </div>
+
+              {/* Associated Ecosystem Quick Links */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-3">
+                  Agency Ecosystem & Records
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Link
+                    to={`/markets?agencyId=${viewingAgency.id}`}
+                    className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl hover:bg-blue-100/80 transition-colors flex flex-col items-center text-center gap-1.5"
+                  >
+                    <Globe2 className="w-5 h-5 text-blue-700" />
+                    <span className="text-xs font-bold text-blue-900">
+                      {viewingAgency.market_count || 0} Markets
+                    </span>
+                    <span className="text-[11px] text-blue-600 flex items-center gap-0.5">
+                      View Markets <ExternalLink className="w-2.5 h-2.5" />
+                    </span>
+                  </Link>
+
+                  <Link
+                    to={`/members?agencyId=${viewingAgency.id}`}
+                    className="p-3 bg-purple-50/70 border border-purple-200 rounded-xl hover:bg-purple-100/80 transition-colors flex flex-col items-center text-center gap-1.5"
+                  >
+                    <Users2 className="w-5 h-5 text-purple-700" />
+                    <span className="text-xs font-bold text-purple-900">
+                      {viewingAgency.member_count || 0} Contacts
+                    </span>
+                    <span className="text-[11px] text-purple-600 flex items-center gap-0.5">
+                      View Team <ExternalLink className="w-2.5 h-2.5" />
+                    </span>
+                  </Link>
+
+                  <Link
+                    to={`/rates?agencyId=${viewingAgency.id}&tab=HISTORY`}
+                    className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl hover:bg-emerald-100/80 transition-colors flex flex-col items-center text-center gap-1.5"
+                  >
+                    <History className="w-5 h-5 text-emerald-700" />
+                    <span className="text-xs font-bold text-emerald-900">Shared Rates</span>
+                    <span className="text-[11px] text-emerald-600 flex items-center gap-0.5">
+                      Rate History <ExternalLink className="w-2.5 h-2.5" />
+                    </span>
+                  </Link>
+
+                  <Link
+                    to={`/special-rates?agencyId=${viewingAgency.id}`}
+                    className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl hover:bg-amber-100/80 transition-colors flex flex-col items-center text-center gap-1.5"
+                  >
+                    <Sparkles className="w-5 h-5 text-amber-700" />
+                    <span className="text-xs font-bold text-amber-900">Special Rates</span>
+                    <span className="text-[11px] text-amber-600 flex items-center gap-0.5">
+                      Special Quotes <ExternalLink className="w-2.5 h-2.5" />
+                    </span>
+                  </Link>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                Created: {new Date(viewingAgency.created_at).toLocaleDateString()}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const toEdit = viewingAgency;
+                    setViewingAgency(null);
+                    handleOpenEditModal(toEdit);
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-navy-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 flex items-center gap-1.5"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  Edit Profile
+                </button>
+                <button
+                  onClick={() => setViewingAgency(null)}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-navy-800 hover:bg-navy-900 rounded-lg"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

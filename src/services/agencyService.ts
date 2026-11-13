@@ -13,8 +13,10 @@ export interface CreateAgencyInput {
   code?: string;
   country?: string;
   city?: string;
+  address?: string;
   phone?: string;
   email?: string;
+  internal_notes?: string;
   status?: RecordStatus;
 }
 
@@ -23,8 +25,10 @@ export interface UpdateAgencyInput {
   code?: string;
   country?: string;
   city?: string;
+  address?: string;
   phone?: string;
   email?: string;
+  internal_notes?: string;
   status?: RecordStatus;
 }
 
@@ -96,6 +100,20 @@ export async function createAgency(input: CreateAgencyInput): Promise<{ data: Tr
   }
 
   try {
+    // Check for duplicate name case-insensitively before insert to prevent silent overwriting
+    const { data: existing } = await supabase
+      .from('travel_agencies')
+      .select('id, name')
+      .ilike('name', trimmedName)
+      .maybeSingle();
+
+    if (existing) {
+      return {
+        data: null,
+        error: `An agency with the name "${existing.name}" already exists. Case-insensitive duplicates are not allowed.`,
+      };
+    }
+
     const { data, error } = await supabase
       .from('travel_agencies')
       .insert({
@@ -103,8 +121,10 @@ export async function createAgency(input: CreateAgencyInput): Promise<{ data: Tr
         code: input.code?.trim() || null,
         country: input.country?.trim() || null,
         city: input.city?.trim() || null,
+        address: input.address?.trim() || null,
         phone: input.phone?.trim() || null,
         email: input.email?.trim() || null,
+        internal_notes: input.internal_notes?.trim() || null,
         status: input.status || 'ACTIVE',
       })
       .select()
@@ -112,7 +132,7 @@ export async function createAgency(input: CreateAgencyInput): Promise<{ data: Tr
 
     if (error) {
       if (error.code === '23505') {
-        return { data: null, error: 'An agency with this name already exists' };
+        return { data: null, error: 'An agency with this name or unique key already exists.' };
       }
       return { data: null, error: error.message };
     }
@@ -138,13 +158,31 @@ export async function updateAgency(id: string, input: UpdateAgencyInput): Promis
     if (trimmed.length < 2) {
       return { data: null, error: 'Agency name must be at least 2 characters' };
     }
+
+    // Check case-insensitive duplicate against other agencies
+    const { data: existing } = await supabase
+      .from('travel_agencies')
+      .select('id, name')
+      .ilike('name', trimmed)
+      .neq('id', id)
+      .maybeSingle();
+
+    if (existing) {
+      return {
+        data: null,
+        error: `Another agency with the name "${existing.name}" already exists. Case-insensitive duplicates are not allowed.`,
+      };
+    }
+
     updates.name = trimmed;
   }
   if (input.code !== undefined) updates.code = input.code.trim() || null;
   if (input.country !== undefined) updates.country = input.country.trim() || null;
   if (input.city !== undefined) updates.city = input.city.trim() || null;
+  if (input.address !== undefined) updates.address = input.address.trim() || null;
   if (input.phone !== undefined) updates.phone = input.phone.trim() || null;
   if (input.email !== undefined) updates.email = input.email.trim() || null;
+  if (input.internal_notes !== undefined) updates.internal_notes = input.internal_notes.trim() || null;
   if (input.status !== undefined) updates.status = input.status;
 
   try {
