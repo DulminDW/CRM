@@ -39,9 +39,19 @@ export interface SelectedRecipient {
   designation?: string;
 }
 
+export interface RecipientValidationState {
+  hasInvalidEmails: boolean;
+  hasDuplicateEmails: boolean;
+  invalidEmailCount: number;
+  duplicateEmailCount: number;
+  duplicateEmailWarnings: { email: string; members: AgencyMemberRecord[] }[];
+  invalidEmailContacts: AgencyMemberRecord[];
+}
+
 interface RecipientSelectorProps {
   onSelectionChange: (recipients: SelectedRecipient[]) => void;
   onScopeChange?: (scope: RecipientScope) => void;
+  onValidationChange?: (validationState: RecipientValidationState) => void;
   initialAgencyId?: string;
 }
 
@@ -51,6 +61,7 @@ const EMAIL_REGEX = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
   onSelectionChange,
   onScopeChange,
+  onValidationChange,
   initialAgencyId
 }) => {
   // Master Agency list
@@ -226,60 +237,91 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
   }, [members, selectedAgencyId, scope, selectedMarketIds, searchQuery]);
 
   // Compute final recipients with strict deduplication by normalized email and hierarchy validation
-  const finalRecipients = useMemo(() => {
+  // Also collect duplicate warnings and invalid emails
+  const { finalRecipients, duplicateEmailWarnings, invalidEmailContacts } = useMemo(() => {
     const selectedAgency = agencies.find((a) => a.id === selectedAgencyId);
     const agencyName = selectedAgency ? selectedAgency.name : 'Unknown Agency';
 
-    const seenEmails = new Set<string>();
-    const recipients: SelectedRecipient[] = [];
+    // Map: normalized email -> list of members sharing that email
+    const emailToMembersMap = new Map<string, AgencyMemberRecord[]>();
+    const invalidList: AgencyMemberRecord[] = [];
 
-    members.forEach((m) => {
+    // Filter candidate members according to current scope
+    const candidateMembers = members.filter((m) => {
       // 1. Strict agency integrity check (Never include contacts from another agency)
-      if (m.agency_id !== selectedAgencyId) return;
+      if (m.agency_id !== selectedAgencyId) return false;
 
-      // 2. Check if selected
-      let isCandidate = false;
+      // 2. Scope check
       if (scope === 'COMPANY') {
-        isCandidate = true; // All eligible contacts in the agency
+        return true;
       } else if (scope === 'MARKETS') {
-        isCandidate = Boolean(m.market_id && selectedMarketIds.includes(m.market_id));
+        return Boolean(m.market_id && selectedMarketIds.includes(m.market_id));
       } else {
-        // INDIVIDUALS
-        isCandidate = selectedMemberIds.includes(m.id);
+        return selectedMemberIds.includes(m.id);
+      }
+    });
+
+    candidateMembers.forEach((m) => {
+      if (!m.email || !EMAIL_REGEX.test(m.email.trim())) {
+        invalidList.push(m);
+        return;
       }
 
-      if (!isCandidate) return;
-
-      // 3. Email safety & format validation
-      if (!m.email || !EMAIL_REGEX.test(m.email.trim())) return;
-
-      // 4. Status check (active only)
       if (m.status !== 'ACTIVE') return;
 
-      // 5. Prevent duplicate email addresses in the final recipient list
-      const normalizedEmail = m.email.toLowerCase().trim();
-      if (!seenEmails.has(normalizedEmail)) {
-        seenEmails.add(normalizedEmail);
+      const norm = m.email.toLowerCase().trim();
+      const existing = emailToMembersMap.get(norm) || [];
+      existing.push(m);
+      emailToMembersMap.set(norm, existing);
+    });
+
+    const duplicates: { email: string; members: AgencyMemberRecord[] }[] = [];
+    const recipients: SelectedRecipient[] = [];
+
+    emailToMembersMap.forEach((mList, normEmail) => {
+      if (mList.length > 1) {
+        duplicates.push({ email: normEmail, members: mList });
+      }
+      // Select the first valid member for this unique email
+      const primaryMember = mList[0];
+      if (primaryMember) {
         recipients.push({
-          memberId: m.id,
-          fullName: m.full_name,
-          email: m.email.trim(),
+          memberId: primaryMember.id,
+          fullName: primaryMember.full_name,
+          email: primaryMember.email.trim(),
           agencyId: selectedAgencyId,
           agencyName,
-          marketId: m.market_id,
-          marketName: m.market_name,
-          designation: m.position || undefined
+          marketId: primaryMember.market_id,
+          marketName: primaryMember.market_name,
+          designation: primaryMember.position || undefined
         });
       }
     });
 
-    return recipients;
+    return {
+      finalRecipients: recipients,
+      duplicateEmailWarnings: duplicates,
+      invalidEmailContacts: invalidList
+    };
   }, [members, agencies, selectedAgencyId, scope, selectedMarketIds, selectedMemberIds]);
 
-  // Notify parent component whenever finalRecipients change
+  // Notify parent component whenever finalRecipients change or validation state changes
   useEffect(() => {
     onSelectionChange(finalRecipients);
   }, [finalRecipients, onSelectionChange]);
+
+  useEffect(() => {
+    if (onValidationChange) {
+      onValidationChange({
+        hasInvalidEmails: invalidEmailContacts.length > 0,
+        hasDuplicateEmails: duplicateEmailWarnings.length > 0,
+        invalidEmailCount: invalidEmailContacts.length,
+        duplicateEmailCount: duplicateEmailWarnings.length,
+        duplicateEmailWarnings,
+        invalidEmailContacts
+      });
+    }
+  }, [invalidEmailContacts, duplicateEmailWarnings, onValidationChange]);
 
   // Individual Selection Controls
   const handleSelectAllVisible = () => {
@@ -468,11 +510,11 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
         <label className="block text-xs font-semibold uppercase tracking-wider text-[#667085]">
           2. Recipient Scope Mode
         </label>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <button
             type="button"
             onClick={() => handleScopeChange('COMPANY')}
-            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between min-h-[44px] touch-manipulation ${
               scope === 'COMPANY'
                 ? 'border-[#1455D9] bg-[#EAF2FF]/60 text-[#1455D9] ring-2 ring-[#1455D9]/20'
                 : 'border-[#D9E0EA] bg-white text-[#667085] hover:bg-slate-50'
@@ -489,7 +531,7 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
           <button
             type="button"
             onClick={() => handleScopeChange('MARKETS')}
-            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between min-h-[44px] touch-manipulation ${
               scope === 'MARKETS'
                 ? 'border-[#1455D9] bg-[#EAF2FF]/60 text-[#1455D9] ring-2 ring-[#1455D9]/20'
                 : 'border-[#D9E0EA] bg-white text-[#667085] hover:bg-slate-50'
@@ -506,7 +548,7 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
           <button
             type="button"
             onClick={() => handleScopeChange('INDIVIDUALS')}
-            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+            className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between min-h-[44px] touch-manipulation ${
               scope === 'INDIVIDUALS'
                 ? 'border-[#1455D9] bg-[#EAF2FF]/60 text-[#1455D9] ring-2 ring-[#1455D9]/20'
                 : 'border-[#D9E0EA] bg-white text-[#667085] hover:bg-slate-50'
@@ -554,6 +596,41 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Validation Warnings: Duplicate Emails or Invalid Formats */}
+      {duplicateEmailWarnings.length > 0 && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
+          <div className="flex items-center gap-1.5 font-bold text-amber-950">
+            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span>Duplicate Email Address Detected ({duplicateEmailWarnings.length})</span>
+          </div>
+          <p className="text-[11px] text-amber-800">
+            Multiple members share the same email address. The system automatically deduplicates to send only one email per address to prevent multiple emails to the same inbox:
+          </p>
+          <ul className="list-disc list-inside text-[11px] text-amber-900 pl-1">
+            {duplicateEmailWarnings.map((dup) => (
+              <li key={dup.email}>
+                <strong>{dup.email}</strong>: shared by {dup.members.map((m) => m.full_name).join(', ')}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {invalidEmailContacts.length > 0 && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 space-y-1">
+          <div className="flex items-center gap-1.5 font-bold text-red-950">
+            <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <span>Contacts with Invalid or Missing Email ({invalidEmailContacts.length})</span>
+          </div>
+          <p className="text-[11px] text-red-800">
+            The following contacts were excluded from rate sharing because they lack a RFC 5322 compliant email address:
+          </p>
+          <div className="text-[11px] text-red-700 pl-1">
+            {invalidEmailContacts.map((c) => `${c.full_name} (${c.email || 'no email'})`).join(', ')}
           </div>
         </div>
       )}
@@ -624,9 +701,9 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
               // Selection status depends on current scope
               let isSelected = false;
               if (scope === 'COMPANY') {
-                isSelected = isEligible;
+                isSelected = isEligible && selectedMemberIds.includes(member.id);
               } else if (scope === 'MARKETS') {
-                isSelected = isEligible && Boolean(member.market_id && selectedMarketIds.includes(member.market_id));
+                isSelected = isEligible && Boolean(member.market_id && selectedMarketIds.includes(member.market_id)) && selectedMemberIds.includes(member.id);
               } else {
                 isSelected = selectedMemberIds.includes(member.id);
               }
@@ -635,22 +712,24 @@ export const RecipientSelector: React.FC<RecipientSelectorProps> = ({
                 <div
                   key={member.id}
                   onClick={() => {
-                    if (scope === 'INDIVIDUALS' && isEligible) {
+                    if (isEligible) {
                       toggleIndividualMember(member.id);
+                      if (scope !== 'INDIVIDUALS') {
+                        setScope('INDIVIDUALS');
+                        if (onScopeChange) onScopeChange('INDIVIDUALS');
+                      }
                     }
                   }}
                   className={`p-3 flex items-center justify-between gap-3 transition-colors ${
                     !isEligible
                       ? 'opacity-50 cursor-not-allowed bg-slate-50'
-                      : scope === 'INDIVIDUALS'
-                      ? 'cursor-pointer hover:bg-slate-50'
-                      : ''
+                      : 'cursor-pointer hover:bg-slate-50'
                   } ${isSelected && isEligible ? 'bg-blue-50/40' : ''}`}
                 >
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      disabled={!isEligible || scope !== 'INDIVIDUALS'}
+                      disabled={!isEligible}
                       className="text-[#1455D9]"
                     >
                       {isSelected ? (

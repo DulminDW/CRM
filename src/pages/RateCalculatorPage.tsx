@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Calculator,
   Save,
@@ -12,7 +13,11 @@ import {
   Calendar,
   Building,
   HelpCircle,
-  FolderPlus
+  FolderPlus,
+  Send,
+  Users2,
+  UserCheck,
+  MessageSquare
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import {
@@ -25,17 +30,29 @@ import {
 } from '../services/calculationSetupService';
 import { adminActivityService } from '../services/adminActivityService';
 import { rateService } from '../services/rateService';
+import { hotelRateConfigService } from '../services/hotelRateConfigService';
+import { fetchAgencies } from '../services/agencyService';
+import { fetchMembers } from '../services/memberService';
 import { HotelRecord, HotelSeasonRecord } from '../types/hotelHierarchy';
+import { TravelAgencyRecord, AgencyMemberRecord } from '../types/agencyHierarchy';
 
 export const RateCalculatorPage: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   // Hotel & Season Context
   const [hotels, setHotels] = useState<HotelRecord[]>([]);
   const [selectedHotelId, setSelectedHotelId] = useState<string>('');
   const [seasons, setSeasons] = useState<HotelSeasonRecord[]>([]);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string>('');
-  const [selectedRateTier, setSelectedRateTier] = useState<'RED' | 'GREEN' | 'YELLOW'>('GREEN');
+  const [selectedRateTier, setSelectedRateTier] = useState<'RED' | 'GREEN' | 'YELLOW' | 'CUSTOM'>('CUSTOM');
+
+  // Ad-Hoc Custom / Special Rate Target Agency & Member
+  const [agencies, setAgencies] = useState<TravelAgencyRecord[]>([]);
+  const [selectedAgencyId, setSelectedAgencyId] = useState<string>('');
+  const [agencyMembers, setAgencyMembers] = useState<AgencyMemberRecord[]>([]);
+  const [selectedMemberId, setSelectedMemberId] = useState<string>('');
+  const [customNegotiationNotes, setCustomNegotiationNotes] = useState<string>('');
 
   // Calculation Setup & Engine State
   const [config, setConfig] = useState<RateCalculationSetupConfig>(createDefaultCalculationConfig());
@@ -60,7 +77,7 @@ export const RateCalculatorPage: React.FC = () => {
   // Status & Feedback
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
 
-  // Load Initial Hotels & Saved Setups
+  // Load Initial Hotels, Saved Setups & Master Agencies
   useEffect(() => {
     rateService.getHotels().then((hList) => {
       setHotels(hList);
@@ -72,9 +89,35 @@ export const RateCalculatorPage: React.FC = () => {
     calculationSetupService.getSavedSetups().then((setups) => {
       setSavedSetups(setups);
     });
+
+    fetchAgencies().then((res) => {
+      setAgencies(res.data);
+      if (res.data.length > 0 && res.data[0]) {
+        setSelectedAgencyId(res.data[0].id);
+      }
+    });
   }, []);
 
-  // Load Seasons when Hotel changes
+  // Load Agency Members when selected Agency changes
+  useEffect(() => {
+    if (!selectedAgencyId) {
+      setAgencyMembers([]);
+      setSelectedMemberId('');
+      return;
+    }
+
+    fetchMembers(selectedAgencyId).then((res) => {
+      const activeMembers = res.data.filter((m) => m.agency_id === selectedAgencyId && m.status === 'ACTIVE');
+      setAgencyMembers(activeMembers);
+      if (activeMembers.length > 0 && activeMembers[0]) {
+        setSelectedMemberId(activeMembers[0].id);
+      } else {
+        setSelectedMemberId('');
+      }
+    });
+  }, [selectedAgencyId]);
+
+  // Load Seasons and Hotel-specific Rate Config when Hotel changes
   useEffect(() => {
     if (!selectedHotelId) return;
     rateService.getSeasonsForHotel(selectedHotelId).then((sList) => {
@@ -85,7 +128,37 @@ export const RateCalculatorPage: React.FC = () => {
         setSelectedSeasonId('');
       }
     });
-  }, [selectedHotelId]);
+
+    // Auto-populate verified base components if configured for this hotel
+    hotelRateConfigService.getConfigs(selectedHotelId).then((configs) => {
+      const match = configs.find((c) => c.rate_category === selectedRateTier) || configs[0];
+      if (match) {
+        setAnchorValue(match.hb_double_base_rate);
+        setConfig((prev) => ({
+          ...prev,
+          currency: match.currency || 'USD',
+          occupancyAdjustments: {
+            ...prev.occupancyAdjustments,
+            SGL: {
+              ...prev.occupancyAdjustments.SGL!,
+              value: match.single_reduction_amount
+            },
+            TPL: {
+              ...prev.occupancyAdjustments.TPL!,
+              value: match.triple_supplement_amount
+            }
+          },
+          mealAdjustments: {
+            ...prev.mealAdjustments,
+            BB: {
+              ...prev.mealAdjustments.BB!,
+              value: match.bb_reduction_amount
+            }
+          }
+        }));
+      }
+    });
+  }, [selectedHotelId, selectedRateTier]);
 
   // Recalculate grid whenever anchorValue, config, or overrides change
   useEffect(() => {
@@ -290,6 +363,25 @@ export const RateCalculatorPage: React.FC = () => {
     setSaveRateSheetModalOpen(false);
   };
 
+  // Navigate to Email / Share Custom Rate with negotiated payload
+  const handleProceedToEmail = () => {
+    const rateVal = typeof anchorValue === 'number' && anchorValue > 0 ? anchorValue : 100;
+    const hotelObj = hotels.find((h) => h.id === selectedHotelId);
+
+    const params = new URLSearchParams({
+      hotelId: selectedHotelId,
+      seasonId: selectedSeasonId || '',
+      sourceType: 'CUSTOM',
+      customRateAmount: String(rateVal),
+      customRateLabel: `Negotiated Custom Rate (${hotelObj?.hotel_name || 'Property'})`,
+      agencyId: selectedAgencyId || '',
+      memberId: selectedMemberId || '',
+      customNotes: customNegotiationNotes || 'Specially negotiated rate created via Rate Calculations.'
+    });
+
+    navigate(`/share-rates?${params.toString()}`);
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -300,29 +392,37 @@ export const RateCalculatorPage: React.FC = () => {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-[#101828]">Dynamic Rate Calculator</h1>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                Phase 6 Interactive Engine
+              <h1 className="text-2xl font-bold text-[#101828]">Special Rate Preparation &amp; Calculator</h1>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Custom Offer Workflow
               </span>
             </div>
             <p className="text-sm text-[#667085]">
-              Enter anchor rate (Double HB) to automatically calculate the full room & meal matrix with customizable rules and manual overrides.
+              Prepare an occasional negotiated custom rate for a target agency &amp; contact, compute room &amp; meal options, and proceed directly to email.
             </p>
           </div>
         </div>
 
         {/* Global Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={handleProceedToEmail}
+            disabled={!anchorValue || anchorValue <= 0}
+            className="h-11 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-xs font-bold text-white flex items-center gap-2 shadow-xs transition-colors"
+          >
+            <Send className="w-4 h-4" /> Proceed to Email / Share Custom Rate
+          </button>
           <button
             onClick={() => setSaveSetupModalOpen(true)}
-            className="h-10 px-4 rounded-xl border border-[#D9E0EA] bg-white hover:bg-slate-50 text-xs font-bold text-[#101828] flex items-center gap-2 shadow-xs transition-colors"
+            className="h-11 px-4 rounded-xl border border-[#D9E0EA] bg-white hover:bg-slate-50 text-xs font-bold text-[#101828] flex items-center gap-2 shadow-xs transition-colors"
           >
             <FolderPlus className="w-4 h-4 text-[#1455D9]" /> Save as Setup (Optional)
           </button>
           <button
             onClick={() => setSaveRateSheetModalOpen(true)}
             disabled={!anchorValue || anchorValue <= 0}
-            className="h-10 px-4 rounded-xl bg-[#1455D9] hover:bg-blue-700 disabled:opacity-50 text-xs font-bold text-white flex items-center gap-2 shadow-xs transition-colors"
+            className="h-11 px-4 rounded-xl bg-[#1455D9] hover:bg-blue-700 disabled:opacity-50 text-xs font-bold text-white flex items-center gap-2 shadow-xs transition-colors"
           >
             <FileCheck className="w-4 h-4" /> Save Rate Sheet
           </button>
@@ -364,7 +464,7 @@ export const RateCalculatorPage: React.FC = () => {
       )}
 
       {/* Context Selection Bar (Hotel, Season, Rate Tier, Saved Setups) */}
-      <div className="bg-white rounded-2xl border border-[#D9E0EA] p-5 shadow-xs grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="bg-white rounded-2xl border border-[#D9E0EA] p-4 sm:p-5 shadow-xs grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
         {/* Hotel Selector */}
         <div>
           <label className="block text-xs font-semibold text-[#344054] mb-1.5 flex items-center gap-1.5">
@@ -373,7 +473,7 @@ export const RateCalculatorPage: React.FC = () => {
           <select
             value={selectedHotelId}
             onChange={(e) => setSelectedHotelId(e.target.value)}
-            className="w-full h-10 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1455D9]"
+            className="w-full h-11 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1455D9] touch-manipulation"
           >
             {hotels.map((h) => (
               <option key={h.id} value={h.id}>
@@ -391,7 +491,7 @@ export const RateCalculatorPage: React.FC = () => {
           <select
             value={selectedSeasonId}
             onChange={(e) => setSelectedSeasonId(e.target.value)}
-            className="w-full h-10 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1455D9]"
+            className="w-full h-11 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1455D9] touch-manipulation"
           >
             {seasons.length === 0 ? (
               <option value="">No active seasons registered</option>
@@ -405,44 +505,55 @@ export const RateCalculatorPage: React.FC = () => {
           </select>
         </div>
 
-        {/* Rate Category Tier (Red / Green / Yellow) */}
+        {/* Rate Category Tier (Red / Green / Yellow / Custom) */}
         <div>
           <label className="block text-xs font-semibold text-[#344054] mb-1.5 flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-[#667085]" /> Rate Category Tier
           </label>
-          <div className="grid grid-cols-3 gap-1">
+          <div className="grid grid-cols-4 gap-1">
             <button
               type="button"
               onClick={() => setSelectedRateTier('RED')}
-              className={`h-10 rounded-xl text-xs font-bold transition-all border ${
+              className={`h-11 rounded-xl text-xs font-bold transition-all border touch-manipulation ${
                 selectedRateTier === 'RED'
                   ? 'bg-red-500 text-white border-red-600 shadow-xs'
                   : 'bg-white text-red-600 border-red-200 hover:bg-red-50'
               }`}
             >
-              RED (Low)
+              RED
             </button>
             <button
               type="button"
               onClick={() => setSelectedRateTier('GREEN')}
-              className={`h-10 rounded-xl text-xs font-bold transition-all border ${
+              className={`h-11 rounded-xl text-xs font-bold transition-all border touch-manipulation ${
                 selectedRateTier === 'GREEN'
                   ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
                   : 'bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50'
               }`}
             >
-              GREEN (Norm)
+              GREEN
             </button>
             <button
               type="button"
               onClick={() => setSelectedRateTier('YELLOW')}
-              className={`h-10 rounded-xl text-xs font-bold transition-all border ${
+              className={`h-11 rounded-xl text-xs font-bold transition-all border touch-manipulation ${
                 selectedRateTier === 'YELLOW'
                   ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
                   : 'bg-white text-amber-600 border-amber-200 hover:bg-amber-50'
               }`}
             >
-              YELLOW (High)
+              YELLOW
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedRateTier('CUSTOM')}
+              className={`h-11 rounded-xl text-xs font-bold transition-all border touch-manipulation ${
+                selectedRateTier === 'CUSTOM'
+                  ? 'bg-purple-600 text-white border-purple-700 shadow-xs ring-2 ring-purple-300'
+                  : 'bg-white text-purple-700 border-purple-200 hover:bg-purple-50'
+              }`}
+            >
+              CUSTOM
             </button>
           </div>
         </div>
@@ -464,7 +575,7 @@ export const RateCalculatorPage: React.FC = () => {
           <select
             value={selectedSetupId}
             onChange={(e) => handleApplySavedSetup(e.target.value)}
-            className="w-full h-10 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1455D9]"
+            className="w-full h-11 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-[#1455D9] touch-manipulation"
           >
             <option value="">-- Start with Blank / Default --</option>
             {savedSetups.map((s) => (
@@ -473,6 +584,84 @@ export const RateCalculatorPage: React.FC = () => {
               </option>
             ))}
           </select>
+        </div>
+      </div>
+
+      {/* Target Agency & Member Panel for Custom Negotiated Offer */}
+      <div className="bg-gradient-to-r from-purple-50/70 to-blue-50/70 rounded-2xl border border-purple-200 p-5 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-200/60 pb-3">
+          <div className="flex items-center gap-2">
+            <Users2 className="w-5 h-5 text-purple-700" />
+            <div>
+              <h2 className="text-sm font-bold text-[#101828]">Target Agency &amp; Contact Person (Negotiated Custom Rate)</h2>
+              <p className="text-xs text-[#667085]">
+                Custom rates are prepared for a specific agency and contact person. Details will be populated directly into the outgoing email proposal.
+              </p>
+            </div>
+          </div>
+          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-300">
+            Ad-Hoc Negotiation
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Agency Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-[#344054] mb-1.5 flex items-center gap-1.5">
+              <Building className="w-3.5 h-3.5 text-[#667085]" /> Target Travel Agency *
+            </label>
+            <select
+              value={selectedAgencyId}
+              onChange={(e) => setSelectedAgencyId(e.target.value)}
+              className="w-full h-11 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              {agencies.length === 0 ? (
+                <option value="">No agencies available</option>
+              ) : (
+                agencies.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} {a.code ? `(${a.code})` : ''}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+
+          {/* Member / Contact Person Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-[#344054] mb-1.5 flex items-center gap-1.5">
+              <UserCheck className="w-3.5 h-3.5 text-[#667085]" /> Contact Person / Member *
+            </label>
+            <select
+              value={selectedMemberId}
+              onChange={(e) => setSelectedMemberId(e.target.value)}
+              className="w-full h-11 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+            >
+              {agencyMembers.length === 0 ? (
+                <option value="">No active contacts found for agency</option>
+              ) : (
+                agencyMembers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.full_name} {m.position ? `(${m.position})` : ''} &bull; {m.email}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+
+          {/* Negotiation Notes */}
+          <div>
+            <label className="block text-xs font-semibold text-[#344054] mb-1.5 flex items-center gap-1.5">
+              <MessageSquare className="w-3.5 h-3.5 text-[#667085]" /> Negotiation Reason / Special Deal Notes
+            </label>
+            <input
+              type="text"
+              value={customNegotiationNotes}
+              onChange={(e) => setCustomNegotiationNotes(e.target.value)}
+              placeholder="e.g. VIP contract rate agreed via meeting on Nov 10"
+              className="w-full h-11 px-3 rounded-xl border border-[#D9E0EA] text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+          </div>
         </div>
       </div>
 
@@ -806,7 +995,7 @@ export const RateCalculatorPage: React.FC = () => {
                                     setEditingCellKey(cellKey);
                                     setEditingCellValue(cell?.value !== null && cell?.value !== undefined ? String(cell.value) : '');
                                   }}
-                                  className={`cursor-pointer px-3 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 ${
+                                  className={`cursor-pointer px-3 py-2 min-h-[44px] min-w-[70px] rounded-xl border transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
                                     isAnchor
                                       ? 'bg-blue-600 text-white border-blue-700 font-bold shadow-xs'
                                       : isOverridden
@@ -839,7 +1028,7 @@ export const RateCalculatorPage: React.FC = () => {
                                           e.stopPropagation();
                                           handleResetCellToAuto(r.id, m.id);
                                         }}
-                                        className="text-[#1455D9] hover:underline flex items-center gap-0.5 ml-1"
+                                        className="text-[#1455D9] hover:underline flex items-center gap-0.5 ml-1 min-h-[32px] px-1.5 touch-manipulation"
                                         title="Reset to calculated rate"
                                       >
                                         <RotateCcw className="w-2.5 h-2.5" /> Auto

@@ -13,13 +13,17 @@ import { useAuth } from '../hooks/useAuth';
 import { ContractsView } from '../components/rates/ContractsView';
 import { CustomTemplatesView } from '../components/rates/CustomTemplatesView';
 import { QuoteHistoryView } from '../components/rates/QuoteHistoryView';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 export const RateManagementPage: React.FC = () => {
   const { hasPermission } = useAuth();
   const canManageRates = hasPermission('CAN_MANAGE_RATES');
+  const [searchParams] = useSearchParams();
 
-  const [activeTab, setActiveTab] = useState<'SHEETS' | 'CONTRACTS' | 'TEMPLATES' | 'HISTORY'>('SHEETS');
+  const tabParam = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<'SHEETS' | 'CONTRACTS' | 'TEMPLATES' | 'HISTORY'>(
+    tabParam === 'HISTORY' ? 'HISTORY' : tabParam === 'TEMPLATES' ? 'TEMPLATES' : 'SHEETS'
+  );
 
   return (
     <div className="space-y-6">
