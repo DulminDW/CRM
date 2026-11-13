@@ -9,6 +9,8 @@ export interface UserProfile {
   full_name: string;
   role: UserRole;
   is_active: boolean;
+  department?: string | null;
+  last_login_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -32,7 +34,7 @@ export interface AuthState {
 }
 
 export interface AuthContextType extends AuthState {
-  signInWithEmail: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signInWithEmail: (email: string, password: string, rememberMe?: boolean) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   hasRole: (role: UserRole) => boolean;
   hasPermission: (permission: PermissionKey) => boolean;

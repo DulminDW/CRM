@@ -31,7 +31,7 @@ export async function getEmployeeProfileAndPermissions(userId: string): Promise<
     // 1. Fetch user profile
     const { data: profileData, error: profileError } = await supabase
       .from('user_profiles')
-      .select('id, full_name, role, is_active, created_at, updated_at')
+      .select('id, full_name, role, is_active, department, last_login_at, created_at, updated_at')
       .eq('id', userId)
       .maybeSingle();
 

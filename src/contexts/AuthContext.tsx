@@ -3,6 +3,7 @@ import { Session, User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { AuthContextType, UserProfile, PermissionKey, UserRole } from '../types/auth';
 import { AuthContext } from './authContextDef';
+import { REMEMBER_ME_PREF_KEY, STORAGE_AUTH_KEY } from '../lib/authStorage';
 import {
   getEmployeeProfileAndPermissions,
   checkUserRole,
@@ -20,7 +21,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Track mounted status to prevent memory leaks on unmounted state updates
   const isMountedRef = useRef(true);
 
-  // Fetch the user's employee profile and permissions from public tables via centralized auth service
+  // Fetch employee profile and permissions with inactive account enforcement
   const fetchProfileAndPermissions = useCallback(async (userId: string) => {
     try {
       const { profile: employeeProfile, permissions: userPerms, error: queryErr } =
@@ -29,7 +30,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!isMountedRef.current) return;
 
       if (queryErr) {
-        // Table may not yet be migrated in remote database; log clearly without crash
         console.warn('[AuthProvider] Profile query issue:', queryErr.message);
         setError(queryErr.message);
         setProfile(null);
@@ -37,8 +37,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      // Enforcement: Inactive employee account check
+      if (employeeProfile && !employeeProfile.is_active) {
+        console.warn('[AuthProvider] Employee profile is deactivated.');
+        setError('Your account has been deactivated by the Administrator.');
+        setProfile(employeeProfile);
+        setPermissions([]);
+        return;
+      }
+
       setProfile(employeeProfile);
       setPermissions(userPerms);
+      setError(null);
     } catch (err: unknown) {
       if (!isMountedRef.current) return;
       const msg = err instanceof Error ? err.message : 'Failed to retrieve profile';
@@ -49,7 +59,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Initialize session and listen for auth state changes
+  // Initialize session on application startup and subscribe to auth state changes
   useEffect(() => {
     isMountedRef.current = true;
 
@@ -61,7 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const initAuth = async () => {
       try {
         const { data: { session: initialSession }, error: sessionError } = await supabase.auth.getSession();
-        
+
         if (sessionError) {
           console.error('[AuthProvider] getSession error:', sessionError.message);
           if (isMountedRef.current) setError(sessionError.message);
@@ -85,7 +95,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     initAuth();
 
-    // Listen for auth state changes (sign-in, token refresh, user update, sign-out)
+    // Listen for auth state changes (sign-in, token refresh, user update, sign-out across all tabs)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, currentSession) => {
         if (!isMountedRef.current) return;
@@ -107,45 +117,73 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
+    // Multi-tab storage event synchronization
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === STORAGE_AUTH_KEY && !e.newValue) {
+        // Logged out in another tab
+        if (isMountedRef.current) {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setPermissions([]);
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
     return () => {
       isMountedRef.current = false;
       subscription.unsubscribe();
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, [fetchProfileAndPermissions]);
 
-  const signInWithEmail = useCallback(async (email: string, password: string): Promise<{ error: Error | null }> => {
-    if (!isSupabaseConfigured) {
-      return {
-        error: new Error(
-          'Supabase credentials are not configured in .env.local. Please provide VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.'
-        ),
-      };
-    }
-
-    setError(null);
-    try {
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-
-      if (signInError) {
-        setError(signInError.message);
-        return { error: new Error(signInError.message) };
+  // Sign in with email, password, and Remember Me persistence flag
+  const signInWithEmail = useCallback(
+    async (email: string, password: string, rememberMe: boolean = true): Promise<{ error: Error | null }> => {
+      if (!isSupabaseConfigured) {
+        return {
+          error: new Error(
+            'Supabase credentials are not configured in .env.local. Please provide VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.'
+          ),
+        };
       }
 
-      if (data.user) {
-        await fetchProfileAndPermissions(data.user.id);
+      setError(null);
+      try {
+        // Save Remember Me preference before authenticating
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(REMEMBER_ME_PREF_KEY, rememberMe ? 'true' : 'false');
+        }
+
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
+        if (signInError) {
+          setError(signInError.message);
+          return { error: new Error(signInError.message) };
+        }
+
+        if (data.user) {
+          // Record last login timestamp safely in the background
+          Promise.resolve(supabase.rpc('record_employee_login', { p_user_id: data.user.id })).catch(() => {});
+          await fetchProfileAndPermissions(data.user.id);
+        }
+
+        return { error: null };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'An unexpected error occurred during login.';
+        setError(message);
+        return { error: new Error(message) };
       }
+    },
+    [fetchProfileAndPermissions]
+  );
 
-      return { error: null };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'An unexpected error occurred during login.';
-      setError(message);
-      return { error: new Error(message) };
-    }
-  }, [fetchProfileAndPermissions]);
-
+  // Manual Sign Out: Clears Supabase session and local storages across tabs
   const signOut = useCallback(async (): Promise<void> => {
     try {
       if (isSupabaseConfigured) {
@@ -154,6 +192,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.error('[AuthProvider] signOut error:', err);
     } finally {
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(STORAGE_AUTH_KEY);
+        window.sessionStorage.removeItem(STORAGE_AUTH_KEY);
+      }
       if (isMountedRef.current) {
         setSession(null);
         setUser(null);

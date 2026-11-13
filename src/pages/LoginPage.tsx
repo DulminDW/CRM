@@ -12,18 +12,17 @@ import {
   ShieldCheck,
   AlertCircle,
   Loader2,
-  CheckCircle2,
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { signInWithEmail, isConfigured } = useAuth();
+  const { signInWithEmail } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -47,7 +46,7 @@ export const LoginPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const { error } = await signInWithEmail(email, password);
+      const { error } = await signInWithEmail(email, password, rememberMe);
 
       if (error) {
         setErrorMessage(error.message || 'Invalid email or password.');
@@ -253,7 +252,7 @@ export const LoginPage: React.FC = () => {
                   onChange={(e) => setRememberMe(e.target.checked)}
                   className="w-4 h-4 text-[#1455D9] rounded border-[#D9E0EA] focus:ring-[#1455D9]"
                 />
-                <span>Stay signed in on this device</span>
+                <span className="font-medium text-slate-700">Stay signed in on this device</span>
               </label>
             </div>
 
@@ -273,14 +272,6 @@ export const LoginPage: React.FC = () => {
               )}
             </button>
           </form>
-
-          {/* Configuration Note */}
-          {isConfigured && (
-            <div className="mt-8 pt-5 border-t border-[#D9E0EA] flex items-center justify-center gap-1.5 text-xs text-[#16A34A] font-medium">
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Production Supabase Auth Connected</span>
-            </div>
-          )}
         </div>
       </div>
     </div>

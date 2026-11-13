@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { adaptiveAuthStorage, STORAGE_AUTH_KEY } from './authStorage';
 
 // Retrieve environment variables safely
 // Canonical client-safe variables: VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY
@@ -14,7 +15,7 @@ export const isSupabaseConfigured: boolean = Boolean(
   supabaseUrl &&
   supabaseUrl.trim() !== '' &&
   !supabaseUrl.includes('placeholder-project') &&
-    supabasePublishableKey &&
+  supabasePublishableKey &&
   supabasePublishableKey.trim() !== '' &&
   !supabasePublishableKey.includes('placeholder-publishable-key') &&
   !supabasePublishableKey.includes('placeholder-anon-key')
@@ -22,34 +23,34 @@ export const isSupabaseConfigured: boolean = Boolean(
 
 let clientInstance: SupabaseClient | null = null;
 
-    if(isSupabaseConfigured && supabaseUrl && supabasePublishableKey) {
-    clientInstance = createClient(supabaseUrl, supabasePublishableKey, {
+if (isSupabaseConfigured && supabaseUrl && supabasePublishableKey) {
+  clientInstance = createClient(supabaseUrl, supabasePublishableKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storage: adaptiveAuthStorage,
+      storageKey: STORAGE_AUTH_KEY,
+    },
+  });
+} else {
+  // Helpful development warning without revealing secrets
+  console.warn(
+    '[SupabaseClient] Supabase credentials are missing or set to placeholder defaults in environment variables. ' +
+    'Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are configured in .env.local.'
+  );
+
+  // Initialize a safe fallback client to avoid runtime crash on unconfigured local dev
+  clientInstance = createClient(
+    supabaseUrl || 'https://placeholder.supabase.co',
+    supabasePublishableKey || 'placeholder-publishable-key',
+    {
       auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-        storageKey: 'window_companies_crm_auth',
+        persistSession: false,
+        autoRefreshToken: false,
       },
-    });
-  } else {
-    // Helpful development warning without revealing secrets
-    console.warn(
-      '[SupabaseClient] Supabase credentials are missing or set to placeholder defaults in environment variables. ' +
-      'Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are configured in .env.local.'
-    );
+    }
+  );
+}
 
-    // Initialize a safe fallback client to avoid runtime crash on unconfigured local dev
-    clientInstance = createClient(
-      supabaseUrl || 'https://placeholder.supabase.co',
-      supabasePublishableKey || 'placeholder-publishable-key',
-      {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-      }
-    );
-  }
-
-  export const supabase: SupabaseClient = clientInstance;
-
+export const supabase: SupabaseClient = clientInstance;
