@@ -43,6 +43,7 @@ export interface AgencyMemberRecord {
   phone: string | null;
   position: string | null;
   member_code: string | null;
+  notes?: string | null;
   status: RecordStatus;
   created_at: string;
   updated_at: string;

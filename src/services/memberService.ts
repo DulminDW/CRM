@@ -19,6 +19,7 @@ export interface CreateMemberInput {
   phone?: string;
   position?: string;
   member_code?: string;
+  notes?: string;
   status?: RecordStatus;
 }
 
@@ -30,6 +31,7 @@ export interface UpdateMemberInput {
   phone?: string;
   position?: string;
   member_code?: string;
+  notes?: string;
   status?: RecordStatus;
 }
 
@@ -234,6 +236,7 @@ export async function createMember(input: CreateMemberInput): Promise<{ data: Ag
         phone: input.phone?.trim() || null,
         position: input.position?.trim() || null,
         member_code: input.member_code?.trim() || null,
+        notes: input.notes?.trim() || null,
         status: input.status || 'ACTIVE',
       })
       .select(`
@@ -314,6 +317,7 @@ export async function updateMember(id: string, input: UpdateMemberInput): Promis
   if (input.phone !== undefined) updates.phone = input.phone.trim() || null;
   if (input.position !== undefined) updates.position = input.position.trim() || null;
   if (input.member_code !== undefined) updates.member_code = input.member_code.trim() || null;
+  if (input.notes !== undefined) updates.notes = input.notes.trim() || null;
   if (input.status !== undefined) updates.status = input.status;
 
   if (input.agency_id && input.market_id) {
