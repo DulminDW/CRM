@@ -16,6 +16,7 @@ import {
   RefreshCw,
   X,
   ExternalLink,
+  History
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -299,21 +300,21 @@ export const TravelAgenciesPage: React.FC = () => {
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap">
             Filter Status:
           </span>
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium">
-            {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1 rounded-md transition-all ${
-                  statusFilter === s
-                    ? 'bg-white text-navy-900 shadow-sm font-semibold'
-                    : 'text-slate-600 hover:text-navy-900'
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+            <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-medium w-full sm:w-auto justify-between sm:justify-start">
+              {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setStatusFilter(s)}
+                  className={`px-3 py-1.5 min-h-[36px] flex-1 sm:flex-initial rounded-md transition-all touch-manipulation text-center ${
+                    statusFilter === s
+                      ? 'bg-white text-navy-900 shadow-sm font-semibold'
+                      : 'text-slate-600 hover:text-navy-900'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
         </div>
       </div>
 
@@ -457,6 +458,13 @@ export const TravelAgenciesPage: React.FC = () => {
                     {/* Actions */}
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <Link
+                          to={`/rates?agencyId=${agency.id}&tab=HISTORY`}
+                          className="p-1.5 text-slate-500 hover:text-[#1455D9] hover:bg-blue-50 rounded-lg transition-colors"
+                          title="View Rate History for this Agency"
+                        >
+                          <History className="w-4 h-4" />
+                        </Link>
                         <button
                           onClick={() => handleOpenEditModal(agency)}
                           className="p-1.5 text-slate-500 hover:text-navy-800 hover:bg-slate-100 rounded-lg transition-colors"
