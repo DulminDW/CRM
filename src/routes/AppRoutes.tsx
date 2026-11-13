@@ -25,6 +25,9 @@ import { NotificationsPage } from '../pages/NotificationsPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { AdminActivityLogPage } from '../pages/AdminActivityLogPage';
+import { BulkImportPage } from '../pages/BulkImportPage';
+import { EmployeesPage } from '../pages/EmployeesPage';
+import { TasksPage } from '../pages/TasksPage';
 
 export const AppRoutes: React.FC = () => {
   return (
@@ -76,6 +79,7 @@ export const AppRoutes: React.FC = () => {
         {/* Sales & Distribution */}
         <Route path="/share-rates" element={<ShareRatesPage />} />
         <Route path="/sales-activities" element={<SalesActivitiesPage />} />
+        <Route path="/tasks" element={<TasksPage />} />
 
         {/* Communication & Realtime */}
         <Route path="/team-chat" element={<TeamChatPage />} />
@@ -83,6 +87,15 @@ export const AppRoutes: React.FC = () => {
 
         {/* Intelligence & Administration */}
         <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/bulk-import" element={<BulkImportPage />} />
+        <Route
+          path="/employees"
+          element={
+            <ProtectedRoute requiredRole="ADMIN">
+              <EmployeesPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/activity-log"
           element={

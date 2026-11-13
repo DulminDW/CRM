@@ -28,9 +28,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
     calculator: 'Rate Calculator',
     'share-rates': 'Share Rates',
     'sales-activities': 'Sales Activities',
+    tasks: 'Employee Daily Tasks',
+    employees: 'Company Employees',
     'team-chat': 'Team Chat',
     notifications: 'Notifications',
     analytics: 'Analytics & Reports',
+    'bulk-import': 'Bulk Excel Import',
     settings: 'Settings',
   };
 
@@ -44,7 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
       <div className="flex items-center gap-3">
         <button
           onClick={onToggleSidebar}
-          className="lg:hidden p-2 rounded-lg text-[#667085] hover:text-[#101828] hover:bg-slate-100 focus:outline-none"
+          className="lg:hidden p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-[#667085] hover:text-[#101828] hover:bg-slate-100 focus:outline-none touch-manipulation"
           aria-label="Toggle navigation"
         >
           <Menu className="w-5 h-5" />

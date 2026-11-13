@@ -17,6 +17,9 @@ import {
   MessageSquare,
   Bell,
   BarChart3,
+  FileSpreadsheet,
+  CheckSquare,
+  Users,
   Settings,
   ShieldAlert,
   X,
@@ -48,12 +51,15 @@ const NAV_ITEMS: SidebarItem[] = [
   { section: 'Hotels & Pricing', name: 'Rate Calculator', path: '/calculator', icon: Calculator },
 
   { section: 'Distribution & Sales', name: 'Share Rates', path: '/share-rates', icon: Send },
+  { section: 'Distribution & Sales', name: 'Daily Tasks', path: '/tasks', icon: CheckSquare },
   { section: 'Distribution & Sales', name: 'Sales Activities', path: '/sales-activities', icon: PhoneCall },
 
   { section: 'Communication', name: 'Team Chat', path: '/team-chat', icon: MessageSquare },
   { section: 'Communication', name: 'Notifications', path: '/notifications', icon: Bell },
 
   { section: 'Intelligence & Admin', name: 'Analytics & Reports', path: '/analytics', icon: BarChart3 },
+  { section: 'Intelligence & Admin', name: 'Bulk Excel Import', path: '/bulk-import', icon: FileSpreadsheet },
+  { section: 'Intelligence & Admin', name: 'Company Employees', path: '/employees', icon: Users, requiredRole: 'ADMIN' },
   { section: 'Intelligence & Admin', name: 'Admin Activity Log', path: '/activity-log', icon: ShieldAlert, requiredRole: 'ADMIN' },
   { section: 'Intelligence & Admin', name: 'Settings', path: '/settings', icon: Settings, requiredRole: 'ADMIN' },
 ];

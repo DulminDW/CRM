@@ -14,6 +14,7 @@ import {
   RefreshCw,
   X,
   Send,
+  History
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -569,6 +570,13 @@ export const MembersPage: React.FC = () => {
                     {/* Actions: Share Rates, Edit, Delete */}
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <Link
+                          to={`/rates?memberId=${member.id}&tab=HISTORY`}
+                          className="p-1.5 text-[#667085] hover:text-[#1455D9] hover:bg-[#EAF2FF] rounded-lg transition-colors"
+                          title="View Rate History for this Contact"
+                        >
+                          <History className="w-3.5 h-3.5" />
+                        </Link>
                         <Link
                           to={`/share-rates?memberId=${member.id}`}
                           className="p-1.5 text-[#667085] hover:text-[#1455D9] hover:bg-[#EAF2FF] rounded-lg transition-colors"
