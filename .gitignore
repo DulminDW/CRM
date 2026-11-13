@@ -51,3 +51,9 @@ out
 .supabase/
 supabase/.temp/
 *.sql.bak
+
+# Local documentation & reports (keep only README.md tracked in git)
+docs/
+*.md
+!README.md
+
