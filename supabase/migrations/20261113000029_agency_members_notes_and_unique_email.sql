@@ -18,3 +18,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_agency_member_email_case_insensitive
 ON public.agency_members (agency_id, LOWER(TRIM(email)));
 
 COMMENT ON COLUMN public.agency_members.notes IS 'Internal confidential notes regarding this contact person';
+

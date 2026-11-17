@@ -29,3 +29,4 @@ ON public.travel_agencies (LOWER(TRIM(name)));
 
 COMMENT ON COLUMN public.travel_agencies.address IS 'Physical/office address of the travel agency';
 COMMENT ON COLUMN public.travel_agencies.internal_notes IS 'Confidential internal CRM notes for agency';
+
