@@ -12,10 +12,9 @@ import {
   X,
   ExternalLink,
   MapPin,
-  Eye,
   Sliders,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { HotelRecord, HotelStatus, HotelServiceType } from '../types/hotelHierarchy';
 import {
@@ -25,8 +24,10 @@ import {
   deleteHotel,
   CreateHotelInput,
 } from '../services/hotelService';
+import { HotelDetailsModal } from '../components/hotels/HotelDetailsModal';
 
 export const HotelsPage: React.FC = () => {
+  const navigate = useNavigate();
   const { profile, hasPermission } = useAuth();
   const isAdmin = profile?.role === 'ADMIN';
   const canManageRates = hasPermission('CAN_MANAGE_RATES') || isAdmin;
@@ -376,24 +377,29 @@ export const HotelsPage: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full min-w-[650px] text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-[#EAF2FF] border-b border-[#D9E0EA] text-[#08264F] font-bold tracking-wider uppercase text-[11px]">
-                  <th className="py-3 px-4">Hotel Name</th>
-                  <th className="py-3 px-4">Area / Location</th>
-                  <th className="py-3 px-4">Service Channel</th>
-                  <th className="py-3 px-4 text-center">Seasons</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4 min-w-[160px]">Hotel Name</th>
+                  <th className="py-3 px-4 min-w-[130px]">Area / Location</th>
+                  <th className="py-3 px-4 min-w-[120px]">Service Channel</th>
+                  <th className="py-3 px-4 text-center min-w-[90px]">Seasons</th>
+                  <th className="py-3 px-4 text-center min-w-[90px]">Status</th>
+                  <th className="py-3 px-4 text-right min-w-[120px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#D9E0EA]">
                 {filteredHotels.map((hotel) => (
-                  <tr key={hotel.id} className="hover:bg-slate-50/70 transition-colors">
+                  <tr
+                    key={hotel.id}
+                    onClick={() => navigate(`/hotels/${hotel.id}`)}
+                    className="hover:bg-blue-50/40 cursor-pointer transition-colors group"
+                    title={`Click to open full page for ${hotel.hotel_name}`}
+                  >
                     {/* Hotel Name & Code */}
                     <td className="py-3.5 px-4 font-bold text-[#101828]">
                       <div className="flex items-center gap-2">
-                        <span>{hotel.hotel_name}</span>
+                        <span className="group-hover:text-[#1455D9] transition-colors">{hotel.hotel_name}</span>
                         {hotel.hotel_code && (
                           <span className="text-[10px] bg-slate-100 text-[#667085] px-1.5 py-0.5 rounded font-mono border border-slate-200">
                             {hotel.hotel_code}
@@ -433,7 +439,7 @@ export const HotelsPage: React.FC = () => {
                     </td>
 
                     {/* Number of Seasons & Link */}
-                    <td className="py-3.5 px-4 text-center">
+                    <td className="py-3.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                       <Link
                         to={`/seasons?hotelId=${hotel.id}`}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#EAF2FF] text-[#1455D9] hover:bg-[#1455D9] hover:text-white transition-all"
@@ -446,7 +452,7 @@ export const HotelsPage: React.FC = () => {
                     </td>
 
                     {/* Status Toggle */}
-                    <td className="py-3.5 px-4 text-center">
+                    <td className="py-3.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleToggleStatus(hotel)}
                         disabled={!canManageRates}
@@ -466,16 +472,9 @@ export const HotelsPage: React.FC = () => {
                       </button>
                     </td>
 
-                    {/* Actions: View Details, Edit, Manage Seasons, Delete */}
-                    <td className="py-3.5 px-4 text-right">
+                    {/* Actions: Edit, Delete */}
+                    <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => setViewingHotel(hotel)}
-                          className="p-1.5 text-[#667085] hover:text-[#101828] hover:bg-slate-100 rounded-lg transition-colors"
-                          title="View Details"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
                         {canManageRates && (
                           <button
                             onClick={() => handleOpenEditModal(hotel)}
@@ -634,89 +633,13 @@ export const HotelsPage: React.FC = () => {
 
       {/* 
         ========================================================================
-        VIEW HOTEL DETAILS MODAL
+        VIEW HOTEL DETAILS MODAL (Now includes Visits & Quoted Rates History)
         ========================================================================
       */}
-      {viewingHotel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#061D3D]/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white w-full max-w-lg rounded-2xl border border-[#D9E0EA] shadow-2xl overflow-hidden p-6 space-y-5 animate-scale-up">
-            <div className="flex items-start justify-between border-b border-[#D9E0EA] pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#EAF2FF] flex items-center justify-center text-[#1455D9]">
-                  <Hotel className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-[#101828]">{viewingHotel.hotel_name}</h3>
-                  <p className="text-xs text-[#667085]">
-                    Partner Hotel Inventory Card · ID: {viewingHotel.id.slice(0, 8)}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setViewingHotel(null)}
-                className="p-1 text-[#667085] hover:text-[#101828] rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 text-xs">
-              <div className="p-3 rounded-xl bg-slate-50 border border-[#D9E0EA]">
-                <span className="text-[#667085] block font-medium">Hotel Code</span>
-                <span className="font-bold text-[#101828] font-mono mt-0.5 block">
-                  {viewingHotel.hotel_code || 'Not Specified'}
-                </span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-[#D9E0EA]">
-                <span className="text-[#667085] block font-medium">Area / Region</span>
-                <span className="font-bold text-[#101828] mt-0.5 block">
-                  {viewingHotel.area || 'Not Specified'}
-                </span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-[#D9E0EA]">
-                <span className="text-[#667085] block font-medium">Service Channel</span>
-                <span className="font-bold text-[#1455D9] mt-0.5 block">
-                  {viewingHotel.service_type}
-                </span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-[#D9E0EA]">
-                <span className="text-[#667085] block font-medium">Status</span>
-                <span className="font-bold text-emerald-700 mt-0.5 block">
-                  {viewingHotel.status}
-                </span>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-[#EAF2FF] border border-[#1455D9]/20 flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-[#101828] block">Seasonal Validity Periods</span>
-                <span className="text-xs text-[#667085]">
-                  {viewingHotel.season_count || 0} configured seasons attached to this hotel
-                </span>
-              </div>
-              <Link
-                to={`/seasons?hotelId=${viewingHotel.id}`}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white bg-[#1455D9] hover:bg-[#1044B2] transition-colors"
-              >
-                <span>Manage Seasons</span>
-                <ExternalLink className="w-3 h-3" />
-              </Link>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={() => setViewingHotel(null)}
-                className="px-4 py-2 text-xs font-semibold text-[#101828] bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <HotelDetailsModal
+        hotel={viewingHotel}
+        onClose={() => setViewingHotel(null)}
+      />
 
       {/* 
         ========================================================================

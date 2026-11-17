@@ -465,15 +465,15 @@ export const HotelSeasonsPage: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full min-w-[650px] text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-[#EAF2FF] border-b border-[#D9E0EA] text-[#08264F] font-bold tracking-wider uppercase text-[11px]">
-                  <th className="py-3 px-4">Season Label</th>
-                  <th className="py-3 px-4">Partner Hotel</th>
-                  <th className="py-3 px-4">Start Date (Date From)</th>
-                  <th className="py-3 px-4">End Date (Date To)</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4 min-w-[150px]">Season Label</th>
+                  <th className="py-3 px-4 min-w-[150px]">Partner Hotel</th>
+                  <th className="py-3 px-4 min-w-[110px]">Start Date (Date From)</th>
+                  <th className="py-3 px-4 min-w-[110px]">End Date (Date To)</th>
+                  <th className="py-3 px-4 text-center min-w-[80px]">Status</th>
+                  <th className="py-3 px-4 text-right min-w-[120px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#D9E0EA]">
