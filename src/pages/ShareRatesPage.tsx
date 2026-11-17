@@ -1,1542 +1,1928 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Send,
-  Hotel as HotelIcon,
-  CalendarDays,
-  FileText,
   Mail,
   CheckCircle2,
   AlertCircle,
-  Eye,
-  FileCheck2,
-  Info,
   AlertTriangle,
   Clock,
   Sparkles,
-  Tag,
   Copy,
   ExternalLink,
   Check,
-  Smartphone,
-  HelpCircle
+  ChevronRight,
+  ChevronLeft,
+  Trash2,
+  Plus,
+  RefreshCw,
+  Info,
+  Sliders,
+  X
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { rateService, HotelRateSheet, HotelRateOutput } from '../services/rateService';
-import { contractService, HotelContract } from '../services/contractService';
-import { customRateService, CustomRateTemplate } from '../services/customRateService';
-import { quoteService, SavedQuoteItem, QuoteRecord } from '../services/quoteService';
-import { RecipientSelector, SelectedRecipient, RecipientScope, RecipientValidationState } from '../components/rates/RecipientSelector';
-import { HotelRecord, HotelSeasonRecord } from '../types/hotelHierarchy';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { notificationService } from '../services/notificationService';
+import { fetchAgencies } from '../services/agencyService';
+import { fetchMarkets } from '../services/marketService';
+import { fetchMembers } from '../services/memberService';
+import { TravelAgencyRecord, AgencyMarketRecord, AgencyMemberRecord } from '../types/agencyHierarchy';
+
+export type RateCategory = 'RED' | 'GREEN' | 'YELLOW' | 'CUSTOM';
+
+interface HotelItem {
+  id: string;
+  hotel_name: string;
+  hotel_code?: string;
+  area?: string;
+}
+
+interface SeasonItem {
+  id: string;
+  season_label: string;
+  date_from: string;
+  date_to: string;
+  hotel_id: string;
+}
+
+export interface HotelRateSelection {
+  hotelId: string;
+  hotelName: string;
+  seasonId: string;
+  seasonLabel: string;
+  category: RateCategory;
+  currency: string;
+  baseDoubleHb: number;
+  matrix: { roomType: string; bb: number | ''; hb: number | ''; fb: number | '' }[];
+  supplements: {
+    singleReduction?: number | '';
+    tripleSupplement?: number | '';
+    bbReduction?: number | '';
+    childRate?: number | '';
+    extraBedSupplement?: number | '';
+  };
+  conditions: string;
+  taxDetails: string;
+  customRateNotes?: string;
+  hasLoadedRate: boolean;
+  versionNumber?: number;
+}
 
 export const ShareRatesPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // URL Query Parameters for Ad-Hoc Custom Negotiations
-  const queryHotelId = searchParams.get('hotelId');
-  const querySeasonId = searchParams.get('seasonId');
-  const querySourceType = searchParams.get('sourceType');
-  const queryCustomRateAmount = searchParams.get('customRateAmount');
-  const queryCustomRateLabel = searchParams.get('customRateLabel');
-  const queryAgencyId = searchParams.get('agencyId');
-  const queryCustomNotes = searchParams.get('customNotes');
+  // Wizard Step: 1 = Recipients, 2 = Hotels & Rates, 3 = Email Preview & Handoff, 4 = Confirmation
+  const [step, setStep] = useState<number>(1);
 
-  // Wizard state: Property & Season
-  const [hotels, setHotels] = useState<HotelRecord[]>([]);
-  const [selectedHotelId, setSelectedHotelId] = useState<string>(queryHotelId || '');
-  const [seasons, setSeasons] = useState<HotelSeasonRecord[]>([]);
-  const [selectedSeasonId, setSelectedSeasonId] = useState<string>(querySeasonId || '');
+  // ----------------------------------------------------
+  // STEP 1 STATE: Agency -> Market -> Members
+  // ----------------------------------------------------
+  const [agencies, setAgencies] = useState<TravelAgencyRecord[]>([]);
+  const [selectedAgencyId, setSelectedAgencyId] = useState<string>(searchParams.get('agencyId') || '');
+  const [markets, setMarkets] = useState<AgencyMarketRecord[]>([]);
+  const [selectedMarketId, setSelectedMarketId] = useState<string>('ALL');
+  const [members, setMembers] = useState<AgencyMemberRecord[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [searchMemberQuery, setSearchMemberQuery] = useState<string>('');
 
-  // Rate source: Standard Tier (Red/Green/Yellow) vs. Custom (Ad-hoc Negotiated Offer or Pre-configured Template)
-  const [sourceType, setSourceType] = useState<'STANDARD' | 'CUSTOM'>(
-    querySourceType === 'CUSTOM' ? 'CUSTOM' : 'STANDARD'
-  );
-  const [selectedCategory, setSelectedCategory] = useState<'RED' | 'GREEN' | 'YELLOW'>('GREEN');
-  const [customTemplates, setCustomTemplates] = useState<CustomRateTemplate[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  // ----------------------------------------------------
+  // STEP 2 STATE: Hotels & Rate Categories
+  // ----------------------------------------------------
+  const [allHotels, setAllHotels] = useState<HotelItem[]>([]);
+  const [allSeasons, setAllSeasons] = useState<SeasonItem[]>([]);
+  const [hotelSelections, setHotelSelections] = useState<HotelRateSelection[]>([]);
 
-  // Ad-hoc negotiated rate direct input (when creating custom rate for a specific deal)
-  const [isAdHocCustom, setIsAdHocCustom] = useState<boolean>(Boolean(queryCustomRateAmount));
-  const [adHocRateAmount, setAdHocRateAmount] = useState<number | ''>(
-    queryCustomRateAmount ? parseFloat(queryCustomRateAmount) : ''
-  );
-  const [adHocRateLabel, setAdHocRateLabel] = useState<string>(
-    queryCustomRateLabel || 'Custom Negotiated Rate'
-  );
+  // Custom Rate Sheet Builder Modal State
+  const [editingCustomIndex, setEditingCustomIndex] = useState<number | null>(null);
+  const [customModalCurrency, setCustomModalCurrency] = useState<string>('USD');
+  const [customModalMatrix, setCustomModalMatrix] = useState<{ roomType: string; bb: number | ''; hb: number | ''; fb: number | '' }[]>([]);
+  const [customModalSupplements, setCustomModalSupplements] = useState<{
+    singleReduction?: number | '';
+    tripleSupplement?: number | '';
+    bbReduction?: number | '';
+    childRate?: number | '';
+    extraBedSupplement?: number | '';
+  }>({});
+  const [customModalConditions, setCustomModalConditions] = useState<string>('');
+  const [customModalTaxDetails, setCustomModalTaxDetails] = useState<string>('');
+  const [customModalNotes, setCustomModalNotes] = useState<string>('');
 
-  // Rate Sheet & Rate Outputs state (from hotel_rate_sheets / hotel_rate_outputs)
-  const [activeRateSheet, setActiveRateSheet] = useState<HotelRateSheet | null>(null);
-  const [publishedRateOutputs, setPublishedRateOutputs] = useState<HotelRateOutput[]>([]);
+  // ----------------------------------------------------
+  // STEP 3 STATE: Email Preview & Customization
+  // ----------------------------------------------------
+  const [emailSubject, setEmailSubject] = useState<string>('');
+  const [customEmailIntro, setCustomEmailIntro] = useState<string>('');
+  const [internalNotes, setInternalNotes] = useState<string>('');
+  const [isOpeningEmailApp, setIsOpeningEmailApp] = useState<boolean>(false);
+  const [savedQuoteId, setSavedQuoteId] = useState<string | null>(null);
+  const [savedQuoteRef, setSavedQuoteRef] = useState<string | null>(null);
 
-  // Contracts
-  const [contracts, setContracts] = useState<HotelContract[]>([]);
-  const [selectedContractId, setSelectedContractId] = useState<string>('');
+  // Feedback & Copy State
+  const [copiedType, setCopiedType] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // Recipients
-  const [selectedRecipients, setSelectedRecipients] = useState<SelectedRecipient[]>([]);
-  const [recipientScope, setRecipientScope] = useState<RecipientScope>('INDIVIDUALS');
-  const [recipientValidation, setRecipientValidation] = useState<RecipientValidationState | null>(null);
+  // ====================================================
+  // DATA LOADERS
+  // ====================================================
 
-  // Special Conditions & Notes
-  const [specialConditions, setSpecialConditions] = useState<string>(
-    'Rates valid for minimum 2 consecutive nights. Non-combinable with existing promotional offers.'
-  );
-  const [notes, setNotes] = useState<string>(
-    queryCustomNotes || 'Rates quoted on Half Board basis.'
-  );
-  const [roomNightCommitment, setRoomNightCommitment] = useState<number | ''>('');
-
-  // UI state
-  const [loadingHotels, setLoadingHotels] = useState(true);
-  const [loadingSeasons, setLoadingSeasons] = useState(false);
-  const [loadingRates, setLoadingRates] = useState(false);
-  const [savingQuote, setSavingQuote] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [contractModalOpen, setContractModalOpen] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  // 1. Load active hotels from Supabase
+  // Load Agencies
   useEffect(() => {
-    rateService.getHotels()
-      .then((data: HotelRecord[]) => {
-        setHotels(data);
-        if (queryHotelId && data.some((h) => h.id === queryHotelId)) {
-          setSelectedHotelId(queryHotelId);
-        } else if (data.length > 0 && data[0]) {
-          setSelectedHotelId(data[0].id);
+    async function loadAgencies() {
+      const res = await fetchAgencies();
+      if (res.data) {
+        setAgencies(res.data);
+        if (!selectedAgencyId && res.data.length > 0 && res.data[0]) {
+          setSelectedAgencyId(res.data[0].id);
         }
-        setLoadingHotels(false);
-      })
-      .catch((err) => {
-        console.error('Failed to load hotels:', err);
-        setLoadingHotels(false);
-      });
-  }, [queryHotelId]);
-
-  // 2. Load seasons, contracts, and custom templates when hotel changes
-  useEffect(() => {
-    if (!selectedHotelId) return;
-
-    setLoadingSeasons(true);
-    rateService.getSeasonsForHotel(selectedHotelId)
-      .then((data: HotelSeasonRecord[]) => {
-        setSeasons(data);
-        if (querySeasonId && data.some((s) => s.id === querySeasonId)) {
-          setSelectedSeasonId(querySeasonId);
-        } else if (data.length > 0 && data[0]) {
-          setSelectedSeasonId(data[0].id);
-        } else {
-          setSelectedSeasonId('');
-        }
-        setLoadingSeasons(false);
-      })
-      .catch((err) => {
-        console.error('Failed to load seasons:', err);
-        setSeasons([]);
-        setSelectedSeasonId('');
-        setLoadingSeasons(false);
-      });
-
-    // Load custom templates for this hotel
-    customRateService.getTemplates(selectedHotelId)
-      .then((data: CustomRateTemplate[]) => {
-        setCustomTemplates(data);
-        if (data.length > 0 && data[0]) {
-          setSelectedTemplateId(data[0].id);
-        } else {
-          setSelectedTemplateId('');
-        }
-      })
-      .catch((err) => {
-        console.warn('Custom templates table not ready:', err);
-        setCustomTemplates([]);
-        setSelectedTemplateId('');
-      });
-  }, [selectedHotelId]);
-
-  // 3. Load contracts and rate sheets when (hotel, season) changes
-  const loadRatesAndContracts = useCallback(async (hotelId: string, seasonId: string) => {
-    if (!hotelId) return;
-
-    // Fetch contracts matching this hotel and season
-    try {
-      const contractData = await contractService.getContractsForHotel(hotelId, seasonId || undefined);
-      setContracts(contractData);
-      if (contractData.length > 0 && contractData[0]) {
-        setSelectedContractId(contractData[0].id);
-      } else {
-        setSelectedContractId('');
       }
-    } catch (err) {
-      console.warn('Contracts table query failed:', err);
-      setContracts([]);
-      setSelectedContractId('');
     }
-
-    // Fetch published rate sheet and outputs for this hotel and season
-    if (seasonId) {
-      setLoadingRates(true);
-      try {
-        const sheets = await rateService.getRateSheets(hotelId, seasonId);
-        const published = sheets.find((s) => s.status === 'PUBLISHED') || sheets[0] || null;
-        setActiveRateSheet(published);
-
-        if (published && published.hotel_rate_outputs) {
-          setPublishedRateOutputs(published.hotel_rate_outputs);
-        } else {
-          setPublishedRateOutputs([]);
-        }
-      } catch (err) {
-        console.warn('Rate sheets not yet published for this season:', err);
-        setActiveRateSheet(null);
-        setPublishedRateOutputs([]);
-      } finally {
-        setLoadingRates(false);
-      }
-    } else {
-      setActiveRateSheet(null);
-      setPublishedRateOutputs([]);
-    }
+    loadAgencies();
   }, []);
 
+  // Load Markets & Members when Agency changes
   useEffect(() => {
-    loadRatesAndContracts(selectedHotelId, selectedSeasonId);
-  }, [selectedHotelId, selectedSeasonId, loadRatesAndContracts]);
-
-  // Lookup selected objects
-  const selectedHotel = useMemo(() => hotels.find((h) => h.id === selectedHotelId), [hotels, selectedHotelId]);
-  const selectedSeason = useMemo(() => seasons.find((s) => s.id === selectedSeasonId), [seasons, selectedSeasonId]);
-  const selectedContract = useMemo(() => contracts.find((c) => c.id === selectedContractId), [contracts, selectedContractId]);
-  const selectedTemplate = useMemo(() => customTemplates.find((t) => t.id === selectedTemplateId), [customTemplates, selectedTemplateId]);
-
-  // Calculate selected rate price
-  const activeRateInfo = useMemo(() => {
-    if (sourceType === 'CUSTOM') {
-      // 1. Direct ad-hoc custom negotiated rate (from Rate Calculations or inline entry)
-      if (isAdHocCustom || (typeof adHocRateAmount === 'number' && adHocRateAmount > 0)) {
-        const amt = typeof adHocRateAmount === 'number' && adHocRateAmount > 0 ? adHocRateAmount : 0;
-        return {
-          amount: amt,
-          currency: selectedContract?.currency || 'USD',
-          label: adHocRateLabel || 'Negotiated Custom Offer',
-          isFormulaVerified: amt > 0, // Staff-negotiated agreed rate
-          roomNightCondition: null
-        };
-      }
-
-      // 2. Pre-configured custom template (Custom 1, 2, 3)
-      if (selectedTemplate) {
-        return {
-          amount: selectedTemplate.rate_amount,
-          currency: selectedTemplate.currency || 'USD',
-          label: `${selectedTemplate.slot_label}: ${selectedTemplate.template_name}`,
-          isFormulaVerified: true,
-          roomNightCondition: selectedTemplate.room_night_condition || null
-        };
-      }
-
-      return {
-        amount: 0,
-        currency: selectedContract?.currency || 'USD',
-        label: 'Custom Offer (No Rate Entered)',
-        isFormulaVerified: false,
-        roomNightCondition: null
-      };
+    if (!selectedAgencyId) {
+      setMarkets([]);
+      setMembers([]);
+      setSelectedMemberIds([]);
+      return;
     }
 
-    // Standard Tier: Red / Green / Yellow
-    const matchedOutput = publishedRateOutputs.find((o) => o.rate_category === selectedCategory);
-    if (matchedOutput) {
-      return {
-        amount: matchedOutput.amount,
-        currency: matchedOutput.currency || selectedContract?.currency || 'USD',
-        label: `${selectedCategory} TIER (${selectedCategory === 'RED' ? 'Lowest' : selectedCategory === 'GREEN' ? 'Normal' : 'Highest'})`,
-        isFormulaVerified: true,
-        roomNightCondition: null
-      };
+    async function loadAgencyData() {
+      const [mRes, memRes] = await Promise.all([
+        fetchMarkets(selectedAgencyId),
+        fetchMembers(selectedAgencyId)
+      ]);
+      if (mRes.data) setMarkets(mRes.data);
+      if (memRes.data) {
+        setMembers(memRes.data);
+        // By default, select all valid members with email
+        const validIds = memRes.data
+          .filter((m) => m.email && /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(m.email.trim()))
+          .map((m) => m.id);
+        setSelectedMemberIds(validIds);
+      }
+      setSelectedMarketId('ALL');
     }
 
-    // Check hotel rate configs for seeded or configured tier rates
-    const localConfigs = localStorage.getItem('window_companies_hotel_rate_configs');
-    if (localConfigs && selectedHotelId) {
+    loadAgencyData();
+  }, [selectedAgencyId]);
+
+  // Load All Hotels & Seasons
+  useEffect(() => {
+    async function loadHotelsAndSeasons() {
+      if (!isSupabaseConfigured) return;
       try {
-        const parsed = JSON.parse(localConfigs);
-        const cfg = parsed.find((c: { hotel_id: string; rate_category: string }) => c.hotel_id === selectedHotelId && c.rate_category === selectedCategory);
-        if (cfg && cfg.hb_double_base_rate > 0) {
-          return {
-            amount: cfg.hb_double_base_rate,
-            currency: cfg.currency || 'USD',
-            label: `${selectedCategory} TIER (${selectedCategory === 'RED' ? 'Lowest' : selectedCategory === 'GREEN' ? 'Normal' : 'Highest'})`,
-            isFormulaVerified: Boolean(cfg.is_formula_verified),
-            roomNightCondition: null
-          };
+        const { data: hData } = await supabase
+          .from('hotels')
+          .select('id, hotel_name, hotel_code, area')
+          .order('hotel_name', { ascending: true });
+
+        if (hData) setAllHotels(hData);
+
+        const { data: sData } = await supabase
+          .from('hotel_seasons')
+          .select('id, season_label, date_from, date_to, hotel_id')
+          .order('date_from', { ascending: true });
+
+        if (sData) setAllSeasons(sData);
+
+        // Prepopulate first hotel selection if query params or default
+        if (hData && hData.length > 0 && hData[0] && hotelSelections.length === 0) {
+          const firstHotel = hData[0];
+          const firstSeason = sData?.find((s) => s.hotel_id === firstHotel.id);
+          if (firstSeason) {
+            addHotelSelection(firstHotel.id, firstSeason.id, 'GREEN');
+          }
         }
-      } catch {
-        // Fallback below
+      } catch (err) {
+        console.error('Error fetching hotels/seasons:', err);
       }
     }
+    loadHotelsAndSeasons();
+  }, []);
 
-    // If no rate outputs entered yet in DB, preserve tier selection but mark formula unverified
+  // Filtered Members for Display
+  const filteredMembers = useMemo(() => {
+    return members.filter((m) => {
+      const matchesMarket = selectedMarketId === 'ALL' || m.market_id === selectedMarketId;
+      const q = searchMemberQuery.toLowerCase();
+      const matchesSearch =
+        !q ||
+        m.full_name.toLowerCase().includes(q) ||
+        (m.email && m.email.toLowerCase().includes(q)) ||
+        (m.position && m.position.toLowerCase().includes(q));
+      return matchesMarket && matchesSearch;
+    });
+  }, [members, selectedMarketId, searchMemberQuery]);
+
+  // Selected Recipient Objects with Duplicate & Invalid Email Detection
+  const recipientAnalysis = useMemo(() => {
+    const selected = members.filter((m) => selectedMemberIds.includes(m.id));
+    const emailCounts: Record<string, number> = {};
+    const validEmails: string[] = [];
+    const invalidMembers: AgencyMemberRecord[] = [];
+    const duplicateEmails: string[] = [];
+
+    selected.forEach((m) => {
+      const email = m.email ? m.email.trim().toLowerCase() : '';
+      if (!email || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
+        invalidMembers.push(m);
+      } else {
+        emailCounts[email] = (emailCounts[email] || 0) + 1;
+        if (emailCounts[email] === 1) {
+          validEmails.push(email);
+        } else if (emailCounts[email] === 2) {
+          duplicateEmails.push(email);
+        }
+      }
+    });
+
     return {
-      amount: 0,
-      currency: selectedContract?.currency || 'USD',
-      label: `${selectedCategory} TIER (Pricing Sheet Pending)`,
-      isFormulaVerified: false,
-      roomNightCondition: null
+      selected,
+      validEmails,
+      invalidMembers,
+      duplicateEmails,
+      count: selected.length,
+      validCount: validEmails.length,
     };
-  }, [
-    sourceType,
-    isAdHocCustom,
-    adHocRateAmount,
-    adHocRateLabel,
-    selectedTemplate,
-    publishedRateOutputs,
-    selectedCategory,
-    selectedContract,
-    selectedHotelId
-  ]);
+  }, [members, selectedMemberIds]);
 
-  // Compose Email Subject & Body
-  const emailSubject = useMemo(() => {
-    return `Partner Rates Proposal: ${selectedHotel?.hotel_name || 'Hotel'} — ${selectedSeason?.season_label || 'Season'}`;
-  }, [selectedHotel, selectedSeason]);
+  // Selected Agency Object
+  const selectedAgency = useMemo(() => {
+    return agencies.find((a) => a.id === selectedAgencyId);
+  }, [agencies, selectedAgencyId]);
 
-  const emailBodyHtml = useMemo(() => {
-    const currencyStr = activeRateInfo.currency;
-    const rateDisplay = activeRateInfo.isFormulaVerified && activeRateInfo.amount > 0
-      ? `${currencyStr} ${activeRateInfo.amount.toFixed(2)}`
-      : `[${selectedCategory} Tier - Calculation Pending Formula Confirmation]`;
+  // ====================================================
+  // HOTEL RATE CONFIGURATION LOGIC
+  // ====================================================
 
-    return `
-      <div style="font-family: Arial, sans-serif; color: #101828; line-height: 1.5;">
-        <h2 style="color: #08264F; margin-bottom: 4px;">Hotel Rates Proposal</h2>
-        <p style="font-size: 13px; color: #475467; margin-top: 0;">Window Companies (Pvt) Ltd. — Partner Sales Desk</p>
-        
-        <p>Dear Partner,</p>
-        <p>We are pleased to share our rate quote for <strong>${selectedHotel?.hotel_name || 'Partner Hotel'}</strong> for the <strong>${selectedSeason?.season_label || 'Requested Season'}</strong> validity period (${selectedSeason?.date_from || 'N/A'} to ${selectedSeason?.date_to || 'N/A'}).</p>
-        
-        <table style="width: 100%; border-collapse: collapse; margin: 16px 0; border: 1px solid #D9E0EA; font-size: 13px;">
-          <thead>
-            <tr style="background: #F8FAFC; text-align: left;">
-              <th style="padding: 10px; border: 1px solid #D9E0EA;">Hotel Property</th>
-              <th style="padding: 10px; border: 1px solid #D9E0EA;">Season Period</th>
-              <th style="padding: 10px; border: 1px solid #D9E0EA;">Room Type</th>
-              <th style="padding: 10px; border: 1px solid #D9E0EA;">Meal Plan</th>
-              <th style="padding: 10px; border: 1px solid #D9E0EA;">Rate Class</th>
-              <th style="padding: 10px; border: 1px solid #D9E0EA; text-align: right;">Quoted Rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td style="padding: 10px; border: 1px solid #D9E0EA; font-weight: bold;">${selectedHotel?.hotel_name || 'N/A'}</td>
-              <td style="padding: 10px; border: 1px solid #D9E0EA;">${selectedSeason?.season_label || 'N/A'}</td>
-              <td style="padding: 10px; border: 1px solid #D9E0EA;">Double Room</td>
-              <td style="padding: 10px; border: 1px solid #D9E0EA;">Half Board (HB)</td>
-              <td style="padding: 10px; border: 1px solid #D9E0EA;">${sourceType === 'CUSTOM' ? (isAdHocCustom ? adHocRateLabel : (selectedTemplate?.slot_label || 'Custom')) : `${selectedCategory} TIER`}</td>
-              <td style="padding: 10px; border: 1px solid #D9E0EA; font-weight: bold; text-align: right; color: #1455D9;">${rateDisplay}</td>
-            </tr>
-          </tbody>
-        </table>
+  // Add a Hotel to the selection
+  const addHotelSelection = useCallback(
+    async (hotelId: string, seasonId?: string, category: RateCategory = 'GREEN') => {
+      const hotel = allHotels.find((h) => h.id === hotelId);
+      const targetSeasonId = seasonId || allSeasons.find((s) => s.hotel_id === hotelId)?.id || '';
+      const season = allSeasons.find((s) => s.id === targetSeasonId);
 
-        ${selectedContract ? `
-          <div style="background: #F0F9FF; border: 1px solid #B9E6FE; padding: 10px; border-radius: 8px; margin-bottom: 12px; font-size: 12px; color: #026AA2;">
-            <strong>Contract Reference:</strong> ${selectedContract.contract_reference} (v${selectedContract.version_number}.0) — ${selectedContract.contract_name} (Valid: ${selectedContract.valid_from} to ${selectedContract.valid_to})
-          </div>
-        ` : ''}
+      const newSelection: HotelRateSelection = {
+        hotelId,
+        hotelName: hotel?.hotel_name || 'Hotel',
+        seasonId: targetSeasonId,
+        seasonLabel: season?.season_label || 'Default Season',
+        category,
+        currency: 'USD',
+        baseDoubleHb: 0,
+        matrix: [],
+        supplements: {},
+        conditions: 'Standard cancellation policy applies. Valid for 14 days.',
+        taxDetails: 'Includes 10% Service Charge & VAT (18%)',
+        customRateNotes: '',
+        hasLoadedRate: false,
+      };
 
-        ${selectedContract && selectedContract.conditions && selectedContract.conditions.filter((c) => !c.is_internal_only).length > 0 ? `
-          <div style="margin-bottom: 12px; font-size: 12px;">
-            <p style="margin-bottom: 4px; font-weight: bold; color: #101828;">Contract Terms &amp; Policies:</p>
-            <ul style="margin: 0; padding-left: 20px; color: #344054;">
-              ${selectedContract.conditions
-                .filter((c) => !c.is_internal_only)
-                .map((c) => `<li><strong>${c.condition_title}:</strong> ${c.condition_description}</li>`)
-                .join('')}
-            </ul>
-          </div>
-        ` : ''}
+      // Fetch saved rates from DB
+      try {
+        const { data } = await supabase
+          .from('hotel_rate_configs')
+          .select('*')
+          .eq('hotel_id', hotelId)
+          .eq('season_id', targetSeasonId)
+          .eq('rate_category', category)
+          .order('version_number', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-        ${specialConditions ? `
-          <p style="margin-bottom: 4px;"><strong>Special Conditions:</strong></p>
-          <p style="margin-top: 0; background: #F8FAFC; padding: 10px; border-radius: 6px; border: 1px solid #EAECF0; font-size: 12px;">${specialConditions}</p>
-        ` : ''}
+        if (data) {
+          newSelection.currency = (data.currency as any) || 'USD';
+          newSelection.baseDoubleHb = data.hb_double_base_rate || 0;
+          newSelection.matrix = Array.isArray(data.rate_matrix) ? data.rate_matrix : [];
+          newSelection.supplements = data.supplements || {};
+          newSelection.conditions = data.conditions || newSelection.conditions;
+          newSelection.taxDetails = data.tax_details || newSelection.taxDetails;
+          newSelection.versionNumber = data.version_number || 1;
+          newSelection.hasLoadedRate = true;
+        }
+      } catch (err) {
+        console.error('Error fetching rate config:', err);
+      }
 
-        ${notes ? `
-          <p style="margin-bottom: 4px;"><strong>Clarifications &amp; Notes:</strong></p>
-          <p style="margin-top: 0; background: #F8FAFC; padding: 10px; border-radius: 6px; border: 1px solid #EAECF0; font-size: 12px;">${notes}</p>
-        ` : ''}
+      setHotelSelections((prev) => {
+        // Prevent duplicate hotel + season combo
+        const exists = prev.some((p) => p.hotelId === hotelId && p.seasonId === targetSeasonId);
+        if (exists) {
+          return prev.map((p) => (p.hotelId === hotelId && p.seasonId === targetSeasonId ? newSelection : p));
+        }
+        return [...prev, newSelection];
+      });
+    },
+    [allHotels, allSeasons]
+  );
 
-        ${(roomNightCommitment || activeRateInfo.roomNightCondition) ? `
-          <p style="font-size: 12px; color: #344054;">
-            <strong>Volume Commitment:</strong> Minimum ${roomNightCommitment || activeRateInfo.roomNightCondition} room nights required.
-          </p>
-        ` : ''}
+  // Update a specific Hotel's Category or Season
+  const updateHotelSelection = async (index: number, updates: Partial<HotelRateSelection>) => {
+    const current = hotelSelections[index];
+    if (!current) return;
 
-        <p style="margin-top: 24px; color: #667085; font-size: 11px; border-top: 1px solid #EAECF0; padding-top: 12px;">
-          Sent via Window Companies Management System. All rates confidential and subject to contract terms.
-        </p>
-      </div>
-    `;
-  }, [
-    selectedHotel,
-    selectedSeason,
-    sourceType,
-    selectedTemplate,
-    selectedCategory,
-    activeRateInfo,
-    selectedContract,
-    specialConditions,
-    notes,
-    roomNightCommitment
-  ]);
+    const updated = { ...current, ...updates };
 
-  // State for email dispatch lifecycle and saved quote reference
-  const [createdQuote, setCreatedQuote] = useState<QuoteRecord | null>(null);
-  const [isOpeningEmailApp, setIsOpeningEmailApp] = useState<boolean>(false);
-  const [copiedSection, setCopiedSection] = useState<'ALL' | 'BODY' | 'SUBJECT' | 'RECIPIENTS' | null>(null);
-  const [showConfirmationPrompt, setShowConfirmationPrompt] = useState<boolean>(false);
-  const [confirmationNotice, setConfirmationNotice] = useState<string | null>(null);
-  const [isSubmittingConfirmation, setIsSubmittingConfirmation] = useState<boolean>(false);
+    // If hotel, season, or category changed, re-fetch rates from DB
+    if (
+      updates.hotelId !== undefined ||
+      updates.seasonId !== undefined ||
+      updates.category !== undefined
+    ) {
+      const hId = updates.hotelId || current.hotelId;
+      const sId = updates.seasonId || current.seasonId;
+      const cat = updates.category || current.category;
 
-  // CC support for rate quote emails
-  const [ccRecipientsInput, setCcRecipientsInput] = useState<string>('');
+      const hObj = allHotels.find((h) => h.id === hId);
+      const sObj = allSeasons.find((s) => s.id === sId);
+      updated.hotelName = hObj?.hotel_name || current.hotelName;
+      updated.seasonLabel = sObj?.season_label || current.seasonLabel;
 
-  // Plain-text counterpart of outgoing email body for multi-part compliance and mailto prefill
-  const emailBodyText = useMemo(() => {
-    const currencyStr = activeRateInfo.currency;
-    const rateDisplay = activeRateInfo.isFormulaVerified && activeRateInfo.amount > 0
-      ? `${currencyStr} ${activeRateInfo.amount.toFixed(2)}`
-      : `[${selectedCategory} Tier - Pending Formula Confirmation]`;
+      try {
+        const { data } = await supabase
+          .from('hotel_rate_configs')
+          .select('*')
+          .eq('hotel_id', hId)
+          .eq('season_id', sId)
+          .eq('rate_category', cat)
+          .order('version_number', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-    const rateClassName = sourceType === 'CUSTOM'
-      ? (isAdHocCustom ? adHocRateLabel : (selectedTemplate?.slot_label || 'Custom Negotiated Rate'))
-      : `${selectedCategory} TIER RATE`;
-
-    // Readable plain-text rate table layout with clear line breaks
-    let body = `HOTEL RATES PROPOSAL
-Window Companies (Pvt) Ltd. — Partner Sales Desk
-------------------------------------------------------------
-
-Dear Partner,
-
-We are pleased to share our rate quote for ${selectedHotel?.hotel_name || 'Partner Hotel'} for the ${selectedSeason?.season_label || 'Season'} validity period (${selectedSeason?.date_from || 'N/A'} to ${selectedSeason?.date_to || 'N/A'}).
-
-============================================================
-QUOTED RATES & ROOM SPECIFICATIONS
-============================================================
-* Hotel:       ${selectedHotel?.hotel_name || 'N/A'}
-* Season:      ${selectedSeason?.season_label || 'N/A'} (${selectedSeason?.date_from || 'N/A'} to ${selectedSeason?.date_to || 'N/A'})
-* Room Type:   Double Room
-* Occupancy:   Double (2 Persons)
-* Meal Plan:   Half Board (HB)
-* Rate Class:  ${rateClassName}
-* Quoted Rate: ${rateDisplay}
-============================================================
-`;
-
-    if (selectedContract) {
-      body += `
-CONTRACT INFORMATION:
-* Contract Reference: ${selectedContract.contract_reference} (v${selectedContract.version_number}.0)
-* Contract Name:      ${selectedContract.contract_name}
-* Validity:           ${selectedContract.valid_from} to ${selectedContract.valid_to}
-* Applicable Season:  ${selectedContract.season_label || 'All Seasons'}
-`;
-
-      const externalConditions = selectedContract.conditions?.filter((c) => !c.is_internal_only) || [];
-      if (externalConditions.length > 0) {
-        body += `
-CONTRACT TERMS & CONDITIONS:
-${externalConditions.map((c) => `* ${c.condition_title}: ${c.condition_description}`).join('\n')}
-`;
+        if (data) {
+          updated.currency = (data.currency as any) || 'USD';
+          updated.baseDoubleHb = data.hb_double_base_rate || 0;
+          updated.matrix = Array.isArray(data.rate_matrix) ? data.rate_matrix : [];
+          updated.supplements = data.supplements || {};
+          updated.conditions = data.conditions || updated.conditions;
+          updated.taxDetails = data.tax_details || updated.taxDetails;
+          updated.versionNumber = data.version_number || 1;
+          updated.hasLoadedRate = true;
+        } else {
+          updated.hasLoadedRate = false;
+          updated.matrix = [];
+        }
+      } catch (err) {
+        console.error('Error fetching rate config:', err);
       }
     }
 
-    if (specialConditions) {
-      body += `
-SPECIAL CONDITIONS:
-${specialConditions}
-`;
+    setHotelSelections((prev) => {
+      const copy = [...prev];
+      copy[index] = updated;
+      return copy;
+    });
+  };
+
+  // Remove a Hotel from the list
+  const removeHotelSelection = (index: number) => {
+    setHotelSelections((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Open Custom Rate Builder Modal for a Hotel
+  const handleOpenCustomRateBuilder = (index: number) => {
+    const sel = hotelSelections[index];
+    if (!sel) return;
+
+    setEditingCustomIndex(index);
+    setCustomModalCurrency(sel.currency || 'USD');
+    setCustomModalConditions(sel.conditions || 'Negotiated rates applicable for confirmed bookings. Non-refundable within 7 days.');
+    setCustomModalTaxDetails(sel.taxDetails || 'Includes 10% Service Charge & VAT (18%)');
+    setCustomModalNotes(sel.customRateNotes || '');
+    setCustomModalSupplements(sel.supplements ? { ...sel.supplements } : {
+      singleReduction: 15,
+      tripleSupplement: 35,
+      bbReduction: 10,
+      childRate: 20,
+      extraBedSupplement: 30
+    });
+
+    if (sel.matrix && sel.matrix.length > 0) {
+      setCustomModalMatrix(sel.matrix.map((r) => ({ ...r })));
+    } else {
+      // Default 4 room types matrix template
+      setCustomModalMatrix([
+        { roomType: 'Single Room', bb: 90, hb: 105, fb: 125 },
+        { roomType: 'Double Room', bb: 110, hb: 120, fb: 145 },
+        { roomType: 'Triple Room', bb: 145, hb: 160, fb: 190 },
+        { roomType: 'Quad Room', bb: 180, hb: 200, fb: 235 },
+      ]);
     }
+  };
 
-    if (notes) {
-      body += `
-CLARIFICATIONS & NOTES:
-${notes}
-`;
+  // Save Custom Rate Builder Changes into HotelSelection and Return
+  const handleSaveCustomRateBuilder = () => {
+    if (editingCustomIndex === null) return;
+
+    const baseDoubleRow = customModalMatrix.find((r) => r.roomType.toLowerCase().includes('double'));
+    const doubleHb = baseDoubleRow && typeof baseDoubleRow.hb === 'number' ? baseDoubleRow.hb : 0;
+
+    setHotelSelections((prev) => {
+      const copy = [...prev];
+      const target = copy[editingCustomIndex];
+      if (target) {
+        copy[editingCustomIndex] = {
+          ...target,
+          category: 'CUSTOM',
+          currency: customModalCurrency,
+          baseDoubleHb: doubleHb || target.baseDoubleHb,
+          matrix: customModalMatrix,
+          supplements: customModalSupplements,
+          conditions: customModalConditions,
+          taxDetails: customModalTaxDetails,
+          customRateNotes: customModalNotes,
+          hasLoadedRate: true,
+          versionNumber: 1
+        };
+      }
+      return copy;
+    });
+
+    setEditingCustomIndex(null);
+  };
+
+  // ====================================================
+  // EMAIL TEMPLATE GENERATION
+  // ====================================================
+
+  // Auto-generate Subject when selections change
+  useEffect(() => {
+    if (hotelSelections.length === 0) {
+      setEmailSubject(`Special Hotel Rates Quote — Window Companies`);
+      return;
     }
+    const hotelNames = hotelSelections.map((h) => h.hotelName).join(' & ');
+    const seasonNames = Array.from(new Set(hotelSelections.map((h) => h.seasonLabel))).join(' / ');
+    setEmailSubject(`${hotelNames} — ${seasonNames} Special Rates`);
+  }, [hotelSelections]);
 
-    if (roomNightCommitment || activeRateInfo.roomNightCondition) {
-      body += `
-VOLUME COMMITMENT:
-* Minimum ${roomNightCommitment || activeRateInfo.roomNightCondition} room nights required.
-`;
+  // Construct Email Body Text (Plain text for mailto & Gmail composer)
+  const emailBodyText = useMemo(() => {
+    const firstRecipient = recipientAnalysis.selected[0];
+    const greetingName = firstRecipient ? firstRecipient.full_name : 'Valued Partner';
+    const agencyName = selectedAgency?.name || 'Travel Partner';
+
+    // Rate category overview badges
+    const categoriesPresent = Array.from(new Set(hotelSelections.map((h) => h.category)));
+    const categoryBadge = categoriesPresent.join(' / ');
+
+    let body = `Dear ${greetingName} and the ${agencyName} Team,\n\n`;
+    body += `Warm greetings from WINDOW COMPANIES (PVT) LTD!\n\n`;
+    if (customEmailIntro.trim()) {
+      body += `${customEmailIntro.trim()}\n\n`;
+    } else {
+      body += `We are pleased to present our official contracted rate proposal (${categoryBadge} RATES) for your upcoming client bookings and tariff planning:\n\n`;
     }
+    body += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
-    body += `
-------------------------------------------------------------
-Sent via Window Companies Management System.
-All rates are strictly confidential and subject to contract terms.
-`;
+    hotelSelections.forEach((sel, idx) => {
+      // Category header with appropriate badge
+      const catBadge = sel.category === 'GREEN'
+        ? 'SPECIAL GREEN RATES'
+        : sel.category === 'RED'
+        ? 'SPECIAL RED RATES'
+        : sel.category === 'YELLOW'
+        ? 'SPECIAL YELLOW RATES'
+        : 'SPECIAL CUSTOM RATES';
 
-    return body.trim();
-  }, [
-    selectedHotel,
-    selectedSeason,
-    sourceType,
-    isAdHocCustom,
-    adHocRateLabel,
-    selectedTemplate,
-    selectedCategory,
-    activeRateInfo,
-    selectedContract,
-    specialConditions,
-    notes,
-    roomNightCommitment
-  ]);
+      // Tax label
+      const taxLabel = sel.taxDetails?.toLowerCase().includes('vat')
+        ? sel.taxDetails
+        : 'Special HB Rates | Non-VAT';
 
-  // Handle Immutable Quote Saving (DRAFT state)
-  const handleSaveQuote = async (): Promise<QuoteRecord | null> => {
-    if (!user) {
-      setErrorMessage('You must be logged in to save a quote snapshot.');
+      // Season icon
+      const seasonLower = sel.seasonLabel.toLowerCase();
+      const seasonIcon = seasonLower.includes('winter')
+        ? '❄️'
+        : seasonLower.includes('summer')
+        ? '☀️'
+        : seasonLower.includes('peak') || seasonLower.includes('festive')
+        ? '🎄'
+        : '📅';
+
+      body += `🏨 ${idx + 1}. ${sel.hotelName.toUpperCase()}\n`;
+      body += `${catBadge} | ${taxLabel}\n\n`;
+      body += `${seasonIcon} ${sel.seasonLabel.toUpperCase()}\n`;
+
+      if (sel.baseDoubleHb > 0) {
+        body += `💰 HB Double: ${sel.currency} ${sel.baseDoubleHb}\n`;
+      }
+
+      // Deductions & Standard Supplements
+      const sup = sel.supplements;
+      if (sup.singleReduction) body += `   • Single Deduction: ${sel.currency} ${sup.singleReduction}\n`;
+      if (sup.bbReduction) body += `   • BB Deduction: ${sel.currency} ${sup.bbReduction}\n`;
+      if (sup.tripleSupplement) body += `   • Triple Supplement: ${sel.currency} ${sup.tripleSupplement}\n`;
+      if (sup.childRate) body += `   • Child Rate: ${sel.currency} ${sup.childRate}\n`;
+      if (sup.extraBedSupplement) body += `   • Extra Bed Supplement: ${sel.currency} ${sup.extraBedSupplement}\n`;
+
+      // Full Room Matrix (if configured)
+      if (sel.matrix.length > 0) {
+        body += `\n📊 Room & Meal Plan Breakdown (${sel.currency}):\n`;
+        body += `────────────────────────────────────────────────────────────\n`;
+        body += `Room Type               | BB        | HB        | FB\n`;
+        body += `────────────────────────────────────────────────────────────\n`;
+        sel.matrix.forEach((row) => {
+          const roomPad = row.roomType.padEnd(23, ' ');
+          const bbPad = (row.bb !== '' ? `${sel.currency} ${row.bb}` : 'N/A').padEnd(9, ' ');
+          const hbPad = (row.hb !== '' ? `${sel.currency} ${row.hb}` : 'N/A').padEnd(9, ' ');
+          const fbPad = row.fb !== '' ? `${sel.currency} ${row.fb}` : 'N/A';
+          body += `${roomPad} | ${bbPad} | ${hbPad} | ${fbPad}\n`;
+        });
+        body += `────────────────────────────────────────────────────────────\n`;
+      }
+
+      // Peak, Festive, or Special Supplements & Conditions
+      if (sel.conditions) {
+        body += `\n✨ Special Supplements & Terms:\n   ${sel.conditions.replace(/\n/g, '\n   ')}\n`;
+      }
+
+      // Direct Hotel Reservation Contacts
+      const cleanHotelSlug = sel.hotelName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const reservationEmail = `reservations@${cleanHotelSlug}.com`;
+      const bookingWindowEmail = `${cleanHotelSlug}@bookingwindow.lk`;
+      body += `\n📩 Reservations:\n   ${bookingWindowEmail} | ${reservationEmail}\n\n`;
+
+      body += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    });
+
+    body += `📋 GENERAL TERMS & CONDITIONS:\n`;
+    body += `• All rates are quoted in USD / specified currency on Half Board (HB) Double basis unless noted.\n`;
+    body += `• Check-in: 14:00 hrs | Check-out: 12:00 noon.\n`;
+    body += `• All reservations are subject to room availability at the time of final confirmation.\n\n`;
+    body += `Please feel free to contact us should you require any adjustments or specialized group quotations.\n\n`;
+    body += `Warm regards,\n\n`;
+    body += `${profile?.full_name || 'Reservations & Sales Team'}\n`;
+    body += `WINDOW COMPANIES (PVT) LTD\n`;
+    body += `Central Hotline: +94 (0) 11 234 5678\n`;
+    body += `Central Reservations: reservations@bookingwindow.lk\n`;
+    body += `Direct Email: ${user?.email || 'sales@windowcompanies.lk'}\n`;
+
+    return body;
+  }, [recipientAnalysis, selectedAgency, customEmailIntro, hotelSelections, profile, user]);
+
+  // Construct Email Body HTML (for rich UI preview)
+  const emailBodyHtml = useMemo(() => {
+    return emailBodyText.replace(/\n/g, '<br/>');
+  }, [emailBodyText]);
+
+  // ====================================================
+  // QUOTE SAVING & EMAIL DISPATCH
+  // ====================================================
+
+  const handleSaveQuoteRecord = async (): Promise<string | null> => {
+    if (!user || !selectedAgencyId) {
+      setStatusMessage({ type: 'error', text: 'You must be logged in and select an Agency.' });
       return null;
     }
-    if (selectedRecipients.length === 0) {
-      setErrorMessage('Please select at least one recipient member.');
+    if (recipientAnalysis.validEmails.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please select at least one member with a valid email.' });
       return null;
     }
-    // Check recipient email validity
-    const hasInvalidEmails = selectedRecipients.some((r) => !r.email || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(r.email.trim()));
-    if (hasInvalidEmails) {
-      setErrorMessage('Cannot proceed: One or more selected recipients do not have a valid email address.');
+    if (hotelSelections.length === 0) {
+      setStatusMessage({ type: 'error', text: 'Please configure at least one Hotel.' });
       return null;
     }
-    if (!selectedHotelId || !selectedSeasonId) {
-      setErrorMessage('Please select both a Hotel and a Season.');
-      return null;
-    }
-    if (!activeRateInfo.isFormulaVerified || activeRateInfo.amount <= 0) {
-      setErrorMessage('Cannot save quote: Rate calculation is pending official company Excel formula verification.');
-      return null;
-    }
+
+    setIsSaving(true);
+    setStatusMessage(null);
 
     try {
-      setSavingQuote(true);
-      setErrorMessage(null);
+      // 1. Generate Quote Reference (e.g. RS-202611-001)
+      const quoteRef = `RS-${Date.now().toString().slice(-6)}`;
 
-      const firstRecipient = selectedRecipients[0];
-      if (!firstRecipient) {
-        throw new Error('No valid recipients selected.');
-      }
-
-      // Build quote line items with frozen snapshots
-      const quoteItems: SavedQuoteItem[] = [
-        {
-          hotel_id: selectedHotelId,
-          season_id: selectedSeasonId,
-          contract_id: selectedContract?.id || null,
-          contract_version_id: selectedContract?.versions?.[0]?.id || null,
-          contract_reference_snapshot: selectedContract ? `${selectedContract.contract_reference} (v${selectedContract.version_number}.0)` : null,
-          rate_sheet_id: activeRateSheet?.id || null,
-          hotel_name_snapshot: selectedHotel?.hotel_name || 'Hotel',
-          season_label_snapshot: selectedSeason?.season_label || 'Season',
-          room_type_snapshot: 'Double',
-          meal_plan_snapshot: 'HB',
-          rate_category: sourceType === 'CUSTOM' ? 'CUSTOM' : selectedCategory,
-          quoted_amount: activeRateInfo.amount,
-          currency: activeRateInfo.currency,
-          custom_notes: notes
-        }
-      ];
-
-      // Map UI recipientScope to database quote recipient_scope
-      let dbRecipientScope: 'INDIVIDUAL' | 'ENTIRE_MARKET' | 'ENTIRE_AGENCY' = 'INDIVIDUAL';
-      if (recipientScope === 'COMPANY') {
-        dbRecipientScope = 'ENTIRE_AGENCY';
-      } else if (recipientScope === 'MARKETS') {
-        dbRecipientScope = 'ENTIRE_MARKET';
-      } else {
-        dbRecipientScope = selectedRecipients.length > 1 ? 'ENTIRE_AGENCY' : 'INDIVIDUAL';
-      }
-
-      const conditionsWithVolume = roomNightCommitment
-        ? `${specialConditions} (Min ${roomNightCommitment} room nights commitment)`.trim()
-        : specialConditions;
-
-      const savedQuote = await quoteService.saveQuoteSnapshot(
-        {
-          agency_id: firstRecipient.agencyId,
-          market_id: firstRecipient.marketId || null,
-          recipient_scope: dbRecipientScope,
+      // 2. Insert Parent Quote
+      const { data: quoteData, error: quoteErr } = await supabase
+        .from('quotes')
+        .insert({
+          quote_reference: quoteRef,
+          sender_id: user.id,
+          agency_id: selectedAgencyId,
+          market_id: selectedMarketId !== 'ALL' ? selectedMarketId : null,
+          recipient_scope: recipientAnalysis.count > 1 ? 'ENTIRE_AGENCY' : 'INDIVIDUAL',
+          quote_lifecycle: 'DRAFT',
+          email_status: 'NOT_SENT',
           email_subject: emailSubject,
           email_body_html: emailBodyHtml,
           email_body_text: emailBodyText,
-          recipients: selectedRecipients,
-          items: quoteItems,
-          special_conditions: conditionsWithVolume,
-          notes
-        },
-        user.id
-      );
+        })
+        .select('id, quote_reference')
+        .single();
 
-      setCreatedQuote(savedQuote);
-      setSuccessMessage(`Quote ${savedQuote.quote_reference} saved as DRAFT snapshot with ${selectedRecipients.length} frozen recipients.`);
-      return savedQuote;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to save quote snapshot';
-      setErrorMessage(msg);
+      if (quoteErr || !quoteData) {
+        throw new Error(quoteErr?.message || 'Failed to save quote');
+      }
+
+      const quoteId = quoteData.id;
+
+      // 3. Insert Quote Recipients Snapshot
+      const recipientInserts = recipientAnalysis.selected.map((m) => ({
+        quote_id: quoteId,
+        original_member_id: m.id,
+        original_full_name: m.full_name,
+        original_email: m.email,
+        original_agency_name: selectedAgency?.name || 'Agency',
+        original_market_name: markets.find((mk) => mk.id === m.market_id)?.market_name || 'Islandwide',
+        delivery_status: 'PENDING',
+      }));
+
+      if (recipientInserts.length > 0) {
+        const { error: recErr } = await supabase.from('quote_recipients').insert(recipientInserts);
+        if (recErr) console.warn('Recipient insert notice:', recErr);
+      }
+
+      // 4. Insert Quote Items Snapshot (One item per Hotel + Rate Tier)
+      const itemInserts = hotelSelections.map((sel) => ({
+        quote_id: quoteId,
+        hotel_id: sel.hotelId,
+        season_id: sel.seasonId,
+        hotel_name_snapshot: sel.hotelName,
+        season_label_snapshot: sel.seasonLabel,
+        room_type_snapshot: 'Double Room',
+        meal_plan_snapshot: 'HB',
+        rate_category: sel.category,
+        quoted_amount: sel.baseDoubleHb || (sel.matrix[0]?.hb as number) || 0,
+        currency: sel.currency,
+        custom_notes: internalNotes || sel.customRateNotes || null,
+      }));
+
+      if (itemInserts.length > 0) {
+        const { error: itemErr } = await supabase.from('quote_items').insert(itemInserts);
+        if (itemErr) console.warn('Quote item insert notice:', itemErr);
+      }
+
+      setSavedQuoteId(quoteId);
+      setSavedQuoteRef(quoteRef);
+
+      // Broadcast notification to Admin and Sales Team members!
+      const hotelNames = hotelSelections.map((h) => h.hotelName);
+      notificationService.notifyTeamOnQuoteShared({
+        senderId: user.id,
+        senderName: profile?.full_name || 'Staff Member',
+        agencyName: selectedAgency?.name || 'Travel Agency',
+        hotelNames: hotelNames,
+        quoteReference: quoteRef,
+      });
+
+      return quoteId;
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message || 'Failed to save quote snapshot.' });
       return null;
     } finally {
-      setSavingQuote(false);
+      setIsSaving(false);
     }
   };
 
-  // Handle mailto URL Generation and Device Email Application Launch
-  const handleOpenInEmailApp = async (targetClient?: 'DEFAULT' | 'GMAIL') => {
+  // Launch Default Email App (Mailto)
+  const handleOpenEmailApp = async () => {
+    const toEmails = recipientAnalysis.validEmails.join(',');
+    const encodedSubject = encodeURIComponent(emailSubject);
+    const encodedBody = encodeURIComponent(emailBodyText);
+    const mailtoUrl = `mailto:${toEmails}?subject=${encodedSubject}&body=${encodedBody}`;
+
+    setIsOpeningEmailApp(true);
+
+    // Save Quote snapshot in background
+    let qId = savedQuoteId;
+    if (!qId) {
+      qId = await handleSaveQuoteRecord();
+    }
+
+    // Launch email application
+    window.location.href = mailtoUrl;
+
+    if (qId) {
+      // Mark as OPENED_IN_EMAIL_APP
+      await supabase
+        .from('quotes')
+        .update({
+          email_status: 'OPENED_IN_EMAIL_APP',
+          opened_in_app_at: new Date().toISOString(),
+        })
+        .eq('id', qId);
+    }
+
+    setIsOpeningEmailApp(false);
+    setStep(4); // Move to Confirmation Step
+  };
+
+  // Launch Gmail Web Composer
+  const handleOpenGmail = async () => {
+    const toEmails = encodeURIComponent(recipientAnalysis.validEmails.join(','));
+    const encodedSubject = encodeURIComponent(emailSubject);
+    const encodedBody = encodeURIComponent(emailBodyText);
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${toEmails}&su=${encodedSubject}&body=${encodedBody}`;
+
+    setIsOpeningEmailApp(true);
+
+    // Save Quote snapshot
+    let qId = savedQuoteId;
+    if (!qId) {
+      qId = await handleSaveQuoteRecord();
+    }
+
+    // Open Gmail composer in new tab
+    window.open(gmailUrl, '_blank', 'noopener,noreferrer');
+
+    if (qId) {
+      await supabase
+        .from('quotes')
+        .update({
+          email_status: 'OPENED_IN_EMAIL_APP',
+          opened_in_app_at: new Date().toISOString(),
+        })
+        .eq('id', qId);
+    }
+
+    setIsOpeningEmailApp(false);
+    setStep(4); // Move to Confirmation Step
+  };
+
+  // Confirm Send Status
+  const handleConfirmSent = async (confirmed: boolean) => {
+    if (!savedQuoteId || !user) return;
+    setIsSaving(true);
     try {
-      setIsOpeningEmailApp(true);
+      await supabase
+        .from('quotes')
+        .update({
+          email_status: confirmed ? 'USER_CONFIRMED_SENT' : 'OPENED_IN_EMAIL_APP',
+          quote_lifecycle: confirmed ? 'DISPATCHED' : 'DRAFT',
+          confirmed_by: user.id,
+          confirmed_at: new Date().toISOString(),
+          confirmation_notes: confirmed
+            ? 'User verified email sent from device client.'
+            : 'User marked as draft/pending send in email client.',
+        })
+        .eq('id', savedQuoteId);
 
-      const toEmails = selectedRecipients.map((r: SelectedRecipient) => r.email).filter(Boolean);
-      const toStr = toEmails.join(',');
-      const ccStr = ccRecipientsInput.trim();
-
-      // Encode subject and body safely
-      const encodedSubject = encodeURIComponent(emailSubject);
-      const encodedBody = encodeURIComponent(emailBodyText);
-
-      // Build query string
-      const queryParts: string[] = [];
-      if (ccStr) {
-        queryParts.push(`cc=${encodeURIComponent(ccStr)}`);
-      }
-      queryParts.push(`subject=${encodedSubject}`);
-      queryParts.push(`body=${encodedBody}`);
-
-      const mailtoUrl = `mailto:${toStr}?${queryParts.join('&')}`;
-
-      // 1. Immediately launch Gmail or Mail client without waiting or blocking
-      if (targetClient === 'GMAIL') {
-        const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(toStr)}${ccStr ? `&cc=${encodeURIComponent(ccStr)}` : ''}&su=${encodedSubject}&body=${encodedBody}`;
-        window.open(gmailUrl, '_blank', 'noopener,noreferrer');
-      } else {
-        window.location.href = mailtoUrl;
-      }
-
-      // 2. Asynchronously save quote snapshot and record handoff in the background if possible
-      try {
-        let targetQuote = createdQuote;
-        if (!targetQuote && selectedHotelId && selectedSeasonId && selectedRecipients.length > 0) {
-          targetQuote = await handleSaveQuote();
-        }
-        if (targetQuote) {
-          await quoteService.recordOpenedInEmailApp(targetQuote.id).catch(() => {});
-        }
-      } catch (saveErr) {
-        console.warn('Background quote save notice:', saveErr);
-      }
-
-      // Show confirmation prompt in CRM: "Did you successfully send this email?"
-      setShowConfirmationPrompt(true);
-      setConfirmationNotice(null);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(`Failed to open email application: ${msg}`);
+      setStatusMessage({
+        type: 'success',
+        text: confirmed
+          ? `Quote #${savedQuoteRef} marked as USER_CONFIRMED_SENT and archived!`
+          : `Quote #${savedQuoteRef} kept in draft status.`,
+      });
+    } catch (err: any) {
+      console.error('Error confirming quote status:', err);
     } finally {
-      setIsOpeningEmailApp(false);
+      setIsSaving(false);
     }
   };
 
-  // Handle staff confirmation prompt response
-  const handleUserConfirmation = async (confirmedSent: boolean) => {
-    if (!createdQuote || !user) return;
-
-    try {
-      setIsSubmittingConfirmation(true);
-      const res = await quoteService.recordUserSendConfirmation(
-        createdQuote.id,
-        user.id,
-        confirmedSent,
-        confirmedSent ? 'Confirmed sent manually in device email app' : 'Staff kept quote as draft in email client'
-      );
-
-      if (res.success && confirmedSent) {
-        setConfirmationNotice('Thank you! Status updated to USER_CONFIRMED_SENT. Record safely archived.');
-        setCreatedQuote((prev: QuoteRecord | null) => prev ? { ...prev, email_status: 'USER_CONFIRMED_SENT' } : null);
-      } else {
-        setConfirmationNotice('Recorded as OPENED_IN_EMAIL_APP. You can revisit and confirm later.');
-        setCreatedQuote((prev: QuoteRecord | null) => prev ? { ...prev, email_status: 'OPENED_IN_EMAIL_APP' } : null);
-      }
-    } catch (err: unknown) {
-      console.warn('Failed to record user confirmation:', err);
-    } finally {
-      setIsSubmittingConfirmation(false);
-    }
-  };
-
-  // Clipboard copy helpers for fallback
-  const handleCopy = (text: string, section: 'ALL' | 'BODY' | 'SUBJECT' | 'RECIPIENTS') => {
+  // Copy to Clipboard Helper
+  const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
-    setCopiedSection(section);
-    setTimeout(() => setCopiedSection(null), 2500);
+    setCopiedType(label);
+    setTimeout(() => setCopiedType(null), 2500);
   };
+
+  // ====================================================
+  // RENDER
+  // ====================================================
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-[#EAF2FF] text-[#1455D9] rounded-xl">
-              <Send className="w-6 h-6" />
+            <div className="w-10 h-10 rounded-xl bg-[#EAF2FF] flex items-center justify-center text-[#1455D9]">
+              <Send className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-[#101828]">Rate Sharing &amp; Dispatch</h1>
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  Sales Workflow
+                <h1 className="text-2xl font-bold tracking-tight text-[#101828]">
+                  Rate Sharing &amp; Dispatch
+                </h1>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-[#1455D9] border border-blue-200">
+                  <Sparkles className="w-3 h-3" /> Multi-Hotel &amp; Multi-Category
                 </span>
               </div>
-              <p className="text-sm text-[#667085]">
-                Configure hotel rates, inspect contracts, bind target recipients, and snapshot proposals.
+              <p className="text-xs text-[#667085] mt-0.5">
+                One Agency → Multiple Members → Multiple Hotels → Different Rate Tiers → One Email Handoff
               </p>
             </div>
           </div>
         </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/sales-activities')}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-[#101828] bg-white border border-[#D9E0EA] hover:bg-slate-50 shadow-xs transition-all"
+          >
+            <Clock className="w-3.5 h-3.5 text-[#667085]" />
+            <span>View Rate Sharing History</span>
+          </button>
+        </div>
       </div>
 
-      {/* Alerts */}
-      {successMessage && (
-        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between text-emerald-800 text-sm">
+      {/* Progress Step Indicator */}
+      <div className="bg-white p-4 rounded-2xl border border-[#D9E0EA] shadow-xs">
+        <div className="flex items-center justify-between max-w-3xl mx-auto">
+          {/* Step 1 */}
+          <button
+            type="button"
+            onClick={() => setStep(1)}
+            className={`flex items-center gap-2.5 transition-all ${
+              step === 1 ? 'text-[#1455D9] font-bold' : step > 1 ? 'text-emerald-600 font-semibold' : 'text-[#667085]'
+            }`}
+          >
+            <span
+              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                step === 1
+                  ? 'bg-[#1455D9] text-white ring-4 ring-blue-100'
+                  : step > 1
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-100 text-[#667085]'
+              }`}
+            >
+              {step > 1 ? <Check className="w-3.5 h-3.5" /> : '1'}
+            </span>
+            <span className="text-xs hidden sm:inline">1. Recipients</span>
+          </button>
+
+          <div className={`h-0.5 flex-1 mx-3 ${step > 1 ? 'bg-emerald-500' : 'bg-slate-200'}`} />
+
+          {/* Step 2 */}
+          <button
+            type="button"
+            onClick={() => setStep(2)}
+            className={`flex items-center gap-2.5 transition-all ${
+              step === 2 ? 'text-[#1455D9] font-bold' : step > 2 ? 'text-emerald-600 font-semibold' : 'text-[#667085]'
+            }`}
+          >
+            <span
+              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                step === 2
+                  ? 'bg-[#1455D9] text-white ring-4 ring-blue-100'
+                  : step > 2
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-100 text-[#667085]'
+              }`}
+            >
+              {step > 2 ? <Check className="w-3.5 h-3.5" /> : '2'}
+            </span>
+            <span className="text-xs hidden sm:inline">2. Hotels &amp; Rates</span>
+          </button>
+
+          <div className={`h-0.5 flex-1 mx-3 ${step > 2 ? 'bg-emerald-500' : 'bg-slate-200'}`} />
+
+          {/* Step 3 */}
+          <button
+            type="button"
+            onClick={() => setStep(3)}
+            className={`flex items-center gap-2.5 transition-all ${
+              step === 3 ? 'text-[#1455D9] font-bold' : step > 3 ? 'text-emerald-600 font-semibold' : 'text-[#667085]'
+            }`}
+          >
+            <span
+              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                step === 3
+                  ? 'bg-[#1455D9] text-white ring-4 ring-blue-100'
+                  : step > 3
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-100 text-[#667085]'
+              }`}
+            >
+              {step > 3 ? <Check className="w-3.5 h-3.5" /> : '3'}
+            </span>
+            <span className="text-xs hidden sm:inline">3. Email &amp; Send</span>
+          </button>
+
+          <div className={`h-0.5 flex-1 mx-3 ${step > 3 ? 'bg-emerald-500' : 'bg-slate-200'}`} />
+
+          {/* Step 4 */}
+          <button
+            type="button"
+            onClick={() => setStep(4)}
+            className={`flex items-center gap-2.5 transition-all ${
+              step === 4 ? 'text-[#1455D9] font-bold' : 'text-[#667085]'
+            }`}
+          >
+            <span
+              className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                step === 4 ? 'bg-[#1455D9] text-white ring-4 ring-blue-100' : 'bg-slate-100 text-[#667085]'
+              }`}
+            >
+              4
+            </span>
+            <span className="text-xs hidden sm:inline">4. Confirmation</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Status Messages */}
+      {statusMessage && (
+        <div
+          className={`p-4 rounded-xl flex items-center justify-between text-xs font-semibold ${
+            statusMessage.type === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              : statusMessage.type === 'error'
+              ? 'bg-red-50 text-red-800 border border-red-200'
+              : 'bg-amber-50 text-amber-800 border border-amber-200'
+          }`}
+        >
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-            <span>{successMessage}</span>
+            {statusMessage.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+            {statusMessage.type === 'error' && <AlertCircle className="w-4 h-4 text-red-600" />}
+            {statusMessage.type === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-600" />}
+            <span>{statusMessage.text}</span>
           </div>
-          <button onClick={() => setSuccessMessage(null)} className="underline text-xs font-semibold">Dismiss</button>
+          <button
+            type="button"
+            onClick={() => setStatusMessage(null)}
+            className="text-[11px] underline font-bold"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
-      {errorMessage && (
-        <div className="p-4 rounded-xl bg-red-50 border border-red-200 flex items-center justify-between text-red-700 text-sm">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 flex-shrink-0" />
-            <span>{errorMessage}</span>
+      {/* ==================================================== */}
+      {/* STEP 1: RECIPIENTS SELECTION (Agency -> Market -> Members) */}
+      {/* ==================================================== */}
+      {step === 1 && (
+        <div className="bg-white p-6 rounded-2xl border border-[#D9E0EA] shadow-xs space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#F0F2F5]">
+            <div>
+              <h2 className="text-base font-bold text-[#101828]">Step 1: Select Target Recipients</h2>
+              <p className="text-xs text-[#667085] mt-0.5">
+                Choose the Travel Agency, filter by specific Market, and select the individual member contacts.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-xs font-bold text-[#1455D9] bg-blue-50 px-3 py-1.5 rounded-xl border border-blue-200">
+              <Mail className="w-4 h-4" />
+              <span>{recipientAnalysis.validCount} Valid Recipient(s) Selected</span>
+            </div>
           </div>
-          <button onClick={() => setErrorMessage(null)} className="underline text-xs font-semibold">Dismiss</button>
-        </div>
-      )}
 
-      {/* Main Grid: Left Steps (Hotel, Season, Contract, Rate, Conditions) / Right Recipient Selector */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column (7 cols): Hotel, Season, Contract, Rate, Conditions */}
-        <div className="lg:col-span-7 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* 1. Agency Selector */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-[#101828]">
+                Select Travel Agency:
+              </label>
+              <select
+                value={selectedAgencyId}
+                onChange={(e) => setSelectedAgencyId(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-[#D9E0EA] rounded-xl text-xs font-bold text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#1455D9]/20 focus:border-[#1455D9]"
+              >
+                {agencies.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({a.city || a.country || 'Global'})
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          {/* STEP 1 & 2: Hotel Property & Seasonal Calendar */}
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-[#101828] uppercase tracking-wider flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-[#1455D9] text-white flex items-center justify-center text-xs">1</span>
-                Property &amp; Seasonal Calendar
-              </h3>
-              {selectedHotel && (
-                <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                  {selectedHotel.area || 'Islandwide'} &bull; {selectedHotel.service_type || 'BOTH'}
+            {/* 2. Market Selector */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-[#101828]">
+                Filter by Market / Region:
+              </label>
+              <select
+                value={selectedMarketId}
+                onChange={(e) => setSelectedMarketId(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-[#D9E0EA] rounded-xl text-xs font-bold text-[#101828] focus:outline-none focus:ring-2 focus:ring-[#1455D9]/20 focus:border-[#1455D9]"
+              >
+                <option value="ALL">All Markets ({markets.length} Available)</option>
+                {markets.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.market_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* 3. Member Contacts Selection Table */}
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#101828]">
+                  Agency Contacts ({filteredMembers.length})
+                </h3>
+                <span className="text-[11px] text-[#667085]">
+                  • {selectedMemberIds.length} of {members.length} selected
                 </span>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-[#667085] mb-1.5">
-                  1. Select Hotel Property *
-                </label>
-                <div className="relative">
-                  <select
-                    value={selectedHotelId}
-                    onChange={(e) => setSelectedHotelId(e.target.value)}
-                    disabled={loadingHotels}
-                    className="w-full h-10 pl-9 pr-4 rounded-lg border border-[#D9E0EA] bg-[#F8FAFC] text-xs font-medium text-[#101828] focus:ring-2 focus:ring-[#1455D9] focus:bg-white"
-                  >
-                    {hotels.map((h) => (
-                      <option key={h.id} value={h.id}>
-                        {h.hotel_name} ({h.hotel_code || 'No Code'})
-                      </option>
-                    ))}
-                  </select>
-                  <HotelIcon className="w-4 h-4 text-[#667085] absolute left-3 top-3 pointer-events-none" />
-                </div>
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#667085] mb-1.5">
-                  2. Select Hotel Season *
-                </label>
-                <div className="relative">
-                  <select
-                    value={selectedSeasonId}
-                    onChange={(e) => setSelectedSeasonId(e.target.value)}
-                    disabled={loadingSeasons || seasons.length === 0}
-                    className="w-full h-10 pl-9 pr-4 rounded-lg border border-[#D9E0EA] bg-[#F8FAFC] text-xs font-medium text-[#101828] focus:ring-2 focus:ring-[#1455D9] focus:bg-white"
-                  >
-                    {seasons.length === 0 ? (
-                      <option value="">No active seasons configured</option>
-                    ) : (
-                      seasons.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.season_label} ({s.date_from} → {s.date_to})
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  <CalendarDays className="w-4 h-4 text-[#667085] absolute left-3 top-3 pointer-events-none" />
-                </div>
-              </div>
-            </div>
-
-            {seasons.length === 0 && !loadingSeasons && (
-              <div className="p-3 bg-amber-50 text-amber-800 text-xs rounded-xl flex items-center gap-2 border border-amber-200">
-                <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber-600" />
-                <span>No seasons have been created for {selectedHotel?.hotel_name}. Please configure seasons in Hotels &amp; Seasons.</span>
-              </div>
-            )}
-          </div>
-
-          {/* STEP 3: Contract Selection & Inspection */}
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-[#101828] uppercase tracking-wider flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-[#1455D9] text-white flex items-center justify-center text-xs">2</span>
-                Master Hotel Contract Reference
-              </h3>
-              {selectedContract && (
-                <button
-                  type="button"
-                  onClick={() => setContractModalOpen(true)}
-                  className="text-xs text-[#1455D9] font-semibold hover:underline flex items-center gap-1"
-                >
-                  <Info className="w-3.5 h-3.5" /> Inspect Terms
-                </button>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#667085] mb-1.5">
-                Active Partner Contract (Scoped to Hotel &amp; Season)
-              </label>
-              <div className="relative">
-                <select
-                  value={selectedContractId}
-                  onChange={(e) => setSelectedContractId(e.target.value)}
-                  className="w-full h-10 pl-9 pr-4 rounded-lg border border-[#D9E0EA] bg-[#F8FAFC] text-xs font-medium text-[#101828] focus:ring-2 focus:ring-[#1455D9] focus:bg-white"
-                >
-                  <option value="">No specific contract attached (Ad-hoc rate)</option>
-                  {contracts.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.contract_reference} — {c.contract_name} ({c.valid_from} to {c.valid_to}) [{c.currency}]
-                    </option>
-                  ))}
-                </select>
-                <FileText className="w-4 h-4 text-[#667085] absolute left-3 top-3 pointer-events-none" />
-              </div>
-            </div>
-
-            {selectedContract && (
-              <div className="p-3 bg-blue-50/60 border border-blue-200 rounded-xl text-xs space-y-1">
-                <div className="flex items-center justify-between font-semibold text-blue-900">
-                  <span>Contract: {selectedContract.contract_name}</span>
-                  <span className="px-2 py-0.5 rounded bg-blue-100 text-[10px] uppercase font-bold text-blue-800">
-                    {selectedContract.currency}
-                  </span>
-                </div>
-                <p className="text-[11px] text-blue-700">
-                  Validity: {selectedContract.valid_from} &rarr; {selectedContract.valid_to} &bull; Applicable Season: {selectedContract.season_label || 'All Seasons'}
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* STEP 4 & 5: Rate Tier (Red/Green/Yellow) or Custom Template (Custom 1-3) */}
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-[#101828] uppercase tracking-wider flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-[#1455D9] text-white flex items-center justify-center text-xs">3</span>
-                Rate Selection &amp; Pricing Tier
-              </h3>
-              <span className="text-[11px] font-semibold text-slate-500">
-                Half Board (HB) &bull; Double Room
-              </span>
-            </div>
-
-            {/* Source Toggle */}
-            <div className="flex rounded-xl bg-[#F8FAFC] p-1 border border-[#D9E0EA]">
-              <button
-                type="button"
-                onClick={() => setSourceType('STANDARD')}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                  sourceType === 'STANDARD' ? 'bg-white text-[#1455D9] shadow-xs' : 'text-[#667085]'
-                }`}
-              >
-                Standard Category Tier (Red / Green / Yellow)
-              </button>
-              <button
-                type="button"
-                onClick={() => setSourceType('CUSTOM')}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                  sourceType === 'CUSTOM' ? 'bg-white text-purple-700 shadow-xs font-bold' : 'text-[#667085]'
-                }`}
-              >
-                Custom / Specially Negotiated Offer
-              </button>
-            </div>
-
-            {/* Standard Category Tier Cards */}
-            {sourceType === 'STANDARD' ? (
-              <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCategory('RED')}
-                    className={`p-3.5 rounded-xl border text-left transition-all ${
-                      selectedCategory === 'RED'
-                        ? 'border-red-500 bg-red-50/70 ring-2 ring-red-500'
-                        : 'border-[#D9E0EA] hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                      <span className="text-[10px] font-bold text-red-700 uppercase">RED TIER</span>
-                    </div>
-                    <div className="text-xs font-bold text-[#101828] mt-1">LOWEST RATE</div>
-                    <span className="text-[11px] text-slate-500 mt-0.5 block">High-volume partner floor</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCategory('GREEN')}
-                    className={`p-3.5 rounded-xl border text-left transition-all ${
-                      selectedCategory === 'GREEN'
-                        ? 'border-emerald-500 bg-emerald-50/70 ring-2 ring-emerald-500'
-                        : 'border-[#D9E0EA] hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                      <span className="text-[10px] font-bold text-emerald-700 uppercase">GREEN TIER</span>
-                    </div>
-                    <div className="text-xs font-bold text-[#101828] mt-1">NORMAL RATE</div>
-                    <span className="text-[11px] text-slate-500 mt-0.5 block">Standard commercial tier</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCategory('YELLOW')}
-                    className={`p-3.5 rounded-xl border text-left transition-all ${
-                      selectedCategory === 'YELLOW'
-                        ? 'border-amber-500 bg-amber-50/70 ring-2 ring-amber-500'
-                        : 'border-[#D9E0EA] hover:bg-slate-50'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                      <span className="text-[10px] font-bold text-amber-700 uppercase">YELLOW TIER</span>
-                    </div>
-                    <div className="text-xs font-bold text-[#101828] mt-1">HIGHEST RATE</div>
-                    <span className="text-[11px] text-slate-500 mt-0.5 block">Peak / non-contracted ceiling</span>
-                  </button>
-                </div>
-
-                {/* Rate Output Status Banner */}
-                {loadingRates ? (
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500 flex items-center gap-2">
-                    <Clock className="w-4 h-4 animate-spin text-[#1455D9]" />
-                    <span>Loading verified rate sheet outputs...</span>
-                  </div>
-                ) : activeRateInfo.isFormulaVerified && activeRateInfo.amount > 0 ? (
-                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center justify-between">
-                    <div>
-                      <strong>Verified Output Rate:</strong> {activeRateInfo.currency} {activeRateInfo.amount.toFixed(2)} (Double / HB)
-                    </div>
-                    <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">
-                      Sheet Version {activeRateSheet?.version_number || 1}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <strong>Pricing Formula Unconfirmed:</strong> Company Excel calculation workbook is pending ingestion. The {selectedCategory} Tier classification is retained for quotes, with price calculated upon rate sheet upload.
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* Custom Rate Options: Ad-Hoc Negotiated Offer OR Pre-Configured Custom Templates */
-              <div className="space-y-4">
-                {/* Custom Sub-Mode Selector */}
-                <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-lg text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setIsAdHocCustom(true)}
-                    className={`flex-1 py-1 px-2.5 rounded font-medium transition-colors ${
-                      isAdHocCustom
-                        ? 'bg-white text-purple-700 font-bold shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Ad-Hoc Negotiated Custom Rate
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsAdHocCustom(false)}
-                    className={`flex-1 py-1 px-2.5 rounded font-medium transition-colors ${
-                      !isAdHocCustom
-                        ? 'bg-white text-blue-700 font-bold shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Use Saved Custom Template (Custom 1-3)
-                  </button>
-                </div>
-
-                {isAdHocCustom ? (
-                  /* Ad-Hoc Custom Deal Input */
-                  <div className="p-4 bg-purple-50/60 rounded-xl border border-purple-200 space-y-3">
-                    <div className="flex items-center justify-between text-xs font-semibold text-purple-900">
-                      <span className="flex items-center gap-1.5">
-                        <Tag className="w-3.5 h-3.5 text-purple-600" /> Specially Negotiated Custom Deal
-                      </span>
-                      <span className="text-[11px] font-normal text-purple-700 bg-purple-100 px-2 py-0.5 rounded">
-                        Non-Template Single Quote
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Negotiated HB Double Rate ({selectedContract?.currency || 'USD'}) *
-                        </label>
-                        <div className="relative">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">$</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={adHocRateAmount}
-                            onChange={(e) => setAdHocRateAmount(e.target.value === '' ? '' : parseFloat(e.target.value))}
-                            placeholder="e.g. 105.00"
-                            className="w-full h-10 pl-7 pr-3 text-xs font-bold rounded-lg border border-purple-300 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Rate Label / Description
-                        </label>
-                        <input
-                          type="text"
-                          value={adHocRateLabel}
-                          onChange={(e) => setAdHocRateLabel(e.target.value)}
-                          placeholder="e.g. Special Deal for Agency"
-                          className="w-full h-10 px-3 text-xs font-medium rounded-lg border border-purple-300 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        />
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-purple-700">
-                      This rate is saved directly into the permanent quote history for the target recipient without polluting reusable company templates.
-                    </p>
-                  </div>
-                ) : (
-                  /* Pre-Configured Templates (Custom 1-3) */
-                  <div className="space-y-3">
-                    <label className="block text-xs font-semibold text-[#667085]">
-                      Select Pre-Configured Custom Rate Template
-                    </label>
-                    {customTemplates.length === 0 ? (
-                      <div className="p-3 bg-amber-50 text-amber-800 text-xs rounded-xl border border-amber-200">
-                        No custom templates configured for {selectedHotel?.hotel_name}. Custom templates can be created under Rate Management Hub.
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {customTemplates.map((tpl) => {
-                          const isSelected = selectedTemplateId === tpl.id;
-                          return (
-                            <button
-                              key={tpl.id}
-                              type="button"
-                              onClick={() => setSelectedTemplateId(tpl.id)}
-                              className={`p-3 rounded-xl border text-left transition-all ${
-                                isSelected
-                                  ? 'border-[#1455D9] bg-[#EAF2FF]/60 ring-2 ring-[#1455D9]'
-                                  : 'border-[#D9E0EA] bg-white hover:bg-slate-50'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-[10px] font-bold text-[#1455D9] uppercase">{tpl.slot_label}</span>
-                                <Sparkles className="w-3.5 h-3.5 text-[#1455D9]" />
-                              </div>
-                              <div className="font-bold text-xs text-[#101828] mt-1">{tpl.template_name}</div>
-                              <div className="text-sm font-extrabold text-[#1455D9] mt-1">
-                                ${tpl.rate_amount} <span className="text-[10px] font-normal text-slate-500">{tpl.currency}</span>
-                              </div>
-                              {tpl.room_night_condition && (
-                                <span className="text-[10px] text-slate-600 block mt-1">
-                                  Min {tpl.room_night_condition} R/N
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* STEP 6: Special Conditions, Notes & Room Night Commitment */}
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] p-5 shadow-xs space-y-4">
-            <h3 className="text-sm font-bold text-[#101828] uppercase tracking-wider flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-[#1455D9] text-white flex items-center justify-center text-xs">4</span>
-              Special Conditions &amp; Quote Notes
-            </h3>
-
-            <div>
-              <label className="block text-xs font-semibold text-[#667085] mb-1.5">
-                Special Conditions (e.g. Min Stay, Blackout Periods)
-              </label>
-              <textarea
-                value={specialConditions}
-                onChange={(e) => setSpecialConditions(e.target.value)}
-                rows={2}
-                className="w-full p-3 rounded-xl border border-[#D9E0EA] text-xs text-[#101828] focus:ring-1 focus:ring-[#1455D9]"
-                placeholder="e.g. Rates valid for minimum 2 consecutive nights. Blackout dates: Dec 24 - Jan 5..."
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-[#667085] mb-1.5">
-                  Staff Notes / Clarifications
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  className="w-full p-3 rounded-xl border border-[#D9E0EA] text-xs text-[#101828] focus:ring-1 focus:ring-[#1455D9]"
-                  placeholder="e.g. Quoted per room per night on Half Board basis."
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#667085] mb-1.5">
-                  Room-Night Commitment Condition (Optional)
-                </label>
+              <div className="flex items-center gap-2">
                 <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={roomNightCommitment}
-                  onChange={(e) => setRoomNightCommitment(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-                  placeholder="e.g. 1500"
-                  className="w-full h-10 px-3 rounded-xl border border-[#D9E0EA] text-xs text-[#101828] focus:ring-1 focus:ring-[#1455D9]"
+                  type="text"
+                  placeholder="Search contacts by name or email..."
+                  value={searchMemberQuery}
+                  onChange={(e) => setSearchMemberQuery(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-50 border border-[#D9E0EA] rounded-lg text-xs text-[#101828] focus:outline-none w-56"
                 />
-                <span className="text-[10px] text-slate-400 mt-1 block">
-                  Enforces volume minimums (e.g. 1500 room nights) as agreed in agency terms.
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column (5 cols): Recipient Selector & Action Panel */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] p-5 shadow-xs">
-            <h3 className="text-sm font-bold text-[#101828] uppercase tracking-wider flex items-center gap-2 mb-4">
-              <span className="w-6 h-6 rounded-full bg-[#1455D9] text-white flex items-center justify-center text-xs">5</span>
-              Recipient Targeting Hierarchy
-            </h3>
-
-            <RecipientSelector
-              onSelectionChange={setSelectedRecipients}
-              onScopeChange={setRecipientScope}
-              onValidationChange={setRecipientValidation}
-              initialAgencyId={queryAgencyId || undefined}
-            />
-          </div>
-
-          {/* Action Bar */}
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between text-xs pb-3 border-b border-[#D9E0EA]">
-              <span className="text-[#667085]">Confirmed Recipients:</span>
-              <span className="font-bold text-[#101828]">{selectedRecipients.length} members</span>
-            </div>
-
-            {recipientValidation?.hasInvalidEmails && (
-              <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
-                <span>{recipientValidation.invalidEmailCount} contact(s) without valid emails were excluded.</span>
-              </div>
-            )}
-
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(true)}
-                disabled={selectedRecipients.length === 0}
-                className="flex-1 h-11 rounded-xl border border-[#D9E0EA] bg-[#F8FAFC] hover:bg-slate-100 text-xs font-bold text-[#101828] flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-              >
-                <Eye className="w-4 h-4 text-[#667085]" /> Preview Email
-              </button>
-
-              <button
-                type="button"
-                onClick={handleSaveQuote}
-                disabled={savingQuote || selectedRecipients.length === 0}
-                className="flex-1 h-11 rounded-xl bg-[#1455D9] hover:bg-blue-700 text-xs font-bold text-white flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-xs"
-              >
-                <FileCheck2 className="w-4 h-4" /> {savingQuote ? 'Saving...' : 'Save Quote Snapshot'}
-              </button>
-            </div>
-
-            <p className="text-[11px] text-[#667085] text-center">
-              Saving freezes an immutable quote snapshot with recipient emails, rate values, and conditions.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Contract Terms Inspection Modal */}
-      {contractModalOpen && selectedContract && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] shadow-xl max-w-lg w-full overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-[#D9E0EA] flex items-center justify-between bg-[#F8FAFC]">
-              <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-[#1455D9]" />
-                <h3 className="font-bold text-sm text-[#101828]">Contract Details &amp; Terms</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setContractModalOpen(false)}
-                className="text-[#667085] hover:text-[#101828] text-xs font-bold"
-              >
-                ✕ Close
-              </button>
-            </div>
-            <div className="p-5 space-y-3 text-xs">
-              <div>
-                <strong>Reference:</strong> {selectedContract.contract_reference}
-              </div>
-              <div>
-                <strong>Contract Name:</strong> {selectedContract.contract_name}
-              </div>
-              <div>
-                <strong>Validity:</strong> {selectedContract.valid_from} &rarr; {selectedContract.valid_to}
-              </div>
-              <div>
-                <strong>Currency:</strong> {selectedContract.currency}
-              </div>
-              <div>
-                <strong>Applicable Season:</strong> {selectedContract.season_label || 'All Seasons'}
-              </div>
-              <div className="pt-2 border-t border-[#D9E0EA]">
-                <strong className="block mb-1">Commercial Terms &amp; Conditions:</strong>
-                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-slate-700 whitespace-pre-wrap">
-                  {selectedContract.terms_and_conditions || 'No special contract conditions specified.'}
-                </div>
-              </div>
-            </div>
-            <div className="p-4 border-t border-[#D9E0EA] bg-[#F8FAFC] flex justify-end">
-              <button
-                type="button"
-                onClick={() => setContractModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#1455D9] text-white hover:bg-blue-700"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Email Preview & Device App Handoff Modal */}
-      {previewOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] shadow-xl max-w-3xl w-full max-h-[92vh] overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-[#D9E0EA] flex items-center justify-between bg-[#F8FAFC]">
-              <div className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-[#1455D9]" />
-                <h3 className="font-bold text-sm text-[#101828]">Email Preview &amp; Device App Handoff</h3>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
-                  Pre-flight Review
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(false)}
-                className="text-[#667085] hover:text-[#101828] text-xs font-bold"
-              >
-                ✕ Close
-              </button>
-            </div>
-
-            <div className="p-5 overflow-y-auto space-y-4">
-              {/* Notice / Feedback if copied */}
-              {copiedSection && (
-                <div className="p-3 rounded-xl text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-600" />
-                  <span>
-                    <strong>Copied to clipboard:</strong> {copiedSection === 'ALL' ? 'Full email payload (Subject & Body)' : copiedSection}
-                  </span>
-                </div>
-              )}
-
-              {/* Status / Device Handoff Banner */}
-              <div className="p-3.5 bg-blue-50/80 rounded-xl border border-blue-200 text-xs text-blue-900 space-y-1">
-                <div className="flex items-center gap-2 font-bold text-blue-950">
-                  <Smartphone className="w-4 h-4 text-[#1455D9]" />
-                  <span>Device Email App Workflow (iOS / Android / Desktop)</span>
-                </div>
-                <p className="text-blue-800 text-[11px] leading-relaxed">
-                  Clicking <strong>Open in Email App</strong> launches your phone or computer's default mail application (e.g. Gmail, Apple Mail, Outlook) with recipient, subject, and plain-text rate table prefilled. You review and press <strong>Send</strong> manually in your email app.
-                </p>
-              </div>
-
-              {/* Recipient Details, CC & Subject Banner */}
-              <div className="text-xs bg-[#F8FAFC] p-4 rounded-xl border border-[#D9E0EA] space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pb-2 border-b border-[#EAECF0]">
-                  <div>
-                    <span className="text-[#667085] block text-[11px]">Primary Agency:</span>
-                    <strong className="text-[#101828]">{selectedRecipients[0]?.agencyName || 'Selected Agency'}</strong>
-                  </div>
-                  <div>
-                    <span className="text-[#667085] block text-[11px]">Recipient Count:</span>
-                    <strong className="text-[#101828]">{selectedRecipients.length} contact(s) targeted</strong>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[#667085] text-[11px] font-semibold">To Recipients:</span>
-                    <button
-                      type="button"
-                      onClick={() => handleCopy(selectedRecipients.map((r: SelectedRecipient) => r.email).join(', '), 'RECIPIENTS')}
-                      className="text-[11px] text-[#1455D9] hover:underline flex items-center gap-1"
-                    >
-                      <Copy className="w-3 h-3" /> Copy Emails
-                    </button>
-                  </div>
-                  <div className="text-[#101828] font-medium max-h-24 overflow-y-auto space-y-0.5 bg-white p-2 rounded-lg border border-[#D9E0EA]">
-                    {selectedRecipients.map((r: SelectedRecipient) => (
-                      <div key={r.memberId} className="flex items-center gap-1.5">
-                        <span className="font-semibold text-slate-900">{r.fullName}</span>
-                        <span className="text-[#1455D9]">&lt;{r.email}&gt;</span>
-                        <span className="text-[10px] text-slate-400">({r.agencyName})</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Optional CC Recipients Input */}
-                <div>
-                  <label className="text-[#667085] block text-[11px] font-semibold mb-1">
-                    CC Recipients (Optional, comma-separated):
-                  </label>
-                  <input
-                    type="text"
-                    value={ccRecipientsInput}
-                    onChange={(e) => setCcRecipientsInput(e.target.value)}
-                    placeholder="sales.team@windowcompanies.lk, supervisor@windowcompanies.lk"
-                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#D9E0EA] bg-white focus:outline-hidden focus:border-[#1455D9]"
-                  />
-                </div>
-
-                <div className="pt-2 border-t border-[#EAECF0] flex items-center justify-between gap-2">
-                  <div className="flex-1">
-                    <span className="text-[#667085] block text-[11px] font-semibold">Subject:</span>
-                    <span className="font-semibold text-[#101828]">{emailSubject}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(emailSubject, 'SUBJECT')}
-                    className="text-[11px] text-[#1455D9] hover:underline flex items-center gap-1 shrink-0"
-                  >
-                    <Copy className="w-3 h-3" /> Copy Subject
-                  </button>
-                </div>
-              </div>
-
-              {/* Exact Rate Summary Strip */}
-              <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-200 text-xs flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <span className="text-blue-700 block text-[11px]">Hotel &amp; Season</span>
-                  <span className="font-bold text-blue-950">
-                    {selectedHotel?.hotel_name || 'N/A'} — {selectedSeason?.season_label || 'N/A'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-blue-700 block text-[11px]">Room / Occupancy / Board</span>
-                  <span className="font-bold text-blue-950">Double / Half Board (HB)</span>
-                </div>
-                <div>
-                  <span className="text-blue-700 block text-[11px]">Rate Class &amp; Quoted Rate</span>
-                  <span className="font-bold text-blue-950">
-                    {sourceType === 'CUSTOM' ? (isAdHocCustom ? adHocRateLabel : (selectedTemplate?.slot_label || 'Custom')) : `${selectedCategory} TIER`}:{' '}
-                    {activeRateInfo.currency} {activeRateInfo.amount.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Plain-Text Rate Table Preview (Matches exactly what opens in email app) */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[#667085] text-[11px] font-semibold uppercase tracking-wider">
-                    Plain-Text Rate Table (Pre-filled into Email App):
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(emailBodyText, 'BODY')}
-                    className="text-[11px] text-[#1455D9] hover:underline flex items-center gap-1 font-semibold"
-                  >
-                    <Copy className="w-3 h-3" /> Copy Email Body
-                  </button>
-                </div>
-                <pre className="p-4 border border-[#D9E0EA] rounded-xl bg-slate-900 text-slate-100 font-mono text-xs whitespace-pre-wrap max-h-72 overflow-y-auto leading-relaxed shadow-inner">
-                  {emailBodyText}
-                </pre>
-              </div>
-
-              {/* Internal Confidentiality & mailto character limit note */}
-              <div className="space-y-1.5">
-                <div className="text-[11px] text-[#667085] bg-slate-50 p-2.5 rounded-lg border border-slate-200 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
-                  <span>
-                    <strong>Internal Privacy Guarantee:</strong> Internal notes, private contract margins, and unverified rates are strictly excluded from the email payload.
-                  </span>
-                </div>
-                <div className="text-[11px] text-amber-700 bg-amber-50/70 p-2.5 rounded-lg border border-amber-200 flex items-start gap-1.5">
-                  <HelpCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
-                  <span>
-                    <strong>Email App Notice:</strong> <code>mailto:</code> links transfer plain text safely across mobile and desktop clients. If your mail client does not open automatically, click <strong>"Copy All Content"</strong> below and paste it into any webmail or client manually.
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Actions: Back, Edit, Copy All, Open in Email App */}
-            <div className="p-4 border-t border-[#D9E0EA] bg-[#F8FAFC] flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPreviewOpen(false)}
-                  className="px-3.5 py-2 text-xs font-semibold rounded-lg text-[#667085] hover:bg-slate-200 transition-colors"
-                >
-                  ← Back to Rates
-                </button>
                 <button
                   type="button"
                   onClick={() => {
-                    setPreviewOpen(false);
-                    window.scrollTo({ top: 350, behavior: 'smooth' });
+                    if (selectedMemberIds.length === members.length) {
+                      setSelectedMemberIds([]);
+                    } else {
+                      setSelectedMemberIds(members.map((m) => m.id));
+                    }
                   }}
-                  className="px-3 py-2 text-xs font-semibold rounded-lg border border-[#D9E0EA] bg-white text-[#344054] hover:bg-slate-100 transition-colors"
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-semibold text-[#101828]"
                 >
-                  Edit Rates
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCopy(`Subject: ${emailSubject}\n\n${emailBodyText}`, 'ALL')}
-                  className="px-3 py-2 text-xs font-semibold rounded-lg border border-[#D9E0EA] bg-white text-[#101828] hover:bg-slate-100 transition-colors flex items-center gap-1"
-                >
-                  <Copy className="w-3 h-3 text-slate-500" /> Copy Email
+                  {selectedMemberIds.length === members.length ? 'Deselect All' : 'Select All'}
                 </button>
               </div>
+            </div>
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleOpenInEmailApp('GMAIL')}
-                  disabled={isOpeningEmailApp || savingQuote}
-                  className="px-3.5 py-2 text-xs font-bold rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                  title="Open directly in Gmail web compose"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" /> Continue in Gmail
-                </button>
+            {/* Contacts List Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-72 overflow-y-auto p-1">
+              {filteredMembers.length === 0 ? (
+                <div className="col-span-full py-8 text-center text-xs text-[#667085] bg-slate-50 rounded-xl">
+                  No contacts found matching the filters.
+                </div>
+              ) : (
+                filteredMembers.map((m) => {
+                  const isSelected = selectedMemberIds.includes(m.id);
+                  const hasEmail = Boolean(m.email && /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(m.email.trim()));
+                  const marketObj = markets.find((mk) => mk.id === m.market_id);
 
-                <button
-                  type="button"
-                  onClick={() => handleOpenInEmailApp('DEFAULT')}
-                  disabled={isOpeningEmailApp || savingQuote}
-                  className="px-4 py-2 text-xs font-bold rounded-lg bg-[#1455D9] text-white hover:bg-blue-700 transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  {isOpeningEmailApp ? 'Opening App...' : 'Open in Email App'}
-                </button>
+                  return (
+                    <div
+                      key={m.id}
+                      onClick={() => {
+                        if (isSelected) {
+                          setSelectedMemberIds((prev) => prev.filter((id) => id !== m.id));
+                        } else {
+                          setSelectedMemberIds((prev) => [...prev, m.id]);
+                        }
+                      }}
+                      className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex items-start gap-3 ${
+                        isSelected
+                          ? 'bg-blue-50/70 border-[#1455D9] shadow-xs'
+                          : 'bg-white border-[#E4E7EC] hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {}} // handled by parent div
+                        className="mt-0.5 rounded text-[#1455D9] focus:ring-[#1455D9]"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-[#101828] truncate">{m.full_name}</h4>
+                          {marketObj && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">
+                              {marketObj.market_name}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#667085] truncate">{m.position || 'Contact'}</p>
+                        <p
+                          className={`text-[11px] truncate mt-1 ${
+                            hasEmail ? 'text-[#1455D9] font-medium' : 'text-red-500 font-semibold'
+                          }`}
+                        >
+                          {hasEmail ? m.email : '⚠️ Missing Email Address'}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Recipient Warnings */}
+            {recipientAnalysis.invalidMembers.length > 0 && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <span>
+                  <strong>Warning:</strong> {recipientAnalysis.invalidMembers.length} selected member(s) have invalid or missing email addresses and will be excluded from dispatch.
+                </span>
               </div>
+            )}
+
+            {recipientAnalysis.duplicateEmails.length > 0 && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 flex items-center gap-2">
+                <Info className="w-4 h-4 text-[#1455D9] flex-shrink-0" />
+                <span>
+                  Duplicate email detected for: <strong>{recipientAnalysis.duplicateEmails.join(', ')}</strong>. The email will be sent only once.
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Navigation to Step 2 */}
+          <div className="pt-4 border-t border-[#F0F2F5] flex justify-end">
+            <button
+              type="button"
+              disabled={recipientAnalysis.validCount === 0}
+              onClick={() => setStep(2)}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-[#1455D9] hover:bg-[#1044B2] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              <span>Next: Select Hotels &amp; Rates</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* STEP 2: HOTELS & RATE CATEGORIES SELECTION */}
+      {/* ==================================================== */}
+      {step === 2 && (
+        <div className="bg-white p-6 rounded-2xl border border-[#D9E0EA] shadow-xs space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#F0F2F5]">
+            <div>
+              <h2 className="text-base font-bold text-[#101828]">Step 2: Select Hotels &amp; Rate Categories</h2>
+              <p className="text-xs text-[#667085] mt-0.5">
+                Add one or more hotels. For each hotel, select its season and target rate tier (RED / GREEN / YELLOW / CUSTOM).
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-700 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+                {hotelSelections.length} Hotel(s) Configured
+              </span>
+            </div>
+          </div>
+
+          {/* Configured Hotels List */}
+          <div className="space-y-4">
+            {hotelSelections.map((sel, idx) => {
+              const hotelSeasons = allSeasons.filter((s) => s.hotel_id === sel.hotelId);
+
+              return (
+                <div
+                  key={`${sel.hotelId}-${idx}`}
+                  className="p-5 rounded-2xl border border-[#D9E0EA] bg-slate-50/50 space-y-4 relative"
+                >
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="w-6 h-6 rounded-full bg-[#1455D9] text-white flex items-center justify-center text-xs font-bold">
+                        {idx + 1}
+                      </span>
+                      {/* Hotel Dropdown */}
+                      <div className="w-64">
+                        <select
+                          value={sel.hotelId}
+                          onChange={(e) => updateHotelSelection(idx, { hotelId: e.target.value })}
+                          className="w-full px-3 py-2 bg-white border border-[#D9E0EA] rounded-xl text-xs font-bold text-[#101828] focus:outline-none"
+                        >
+                          {allHotels.map((h) => (
+                            <option key={h.id} value={h.id}>
+                              {h.hotel_name} {h.hotel_code ? `(${h.hotel_code})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Season Dropdown */}
+                      <div className="w-56">
+                        <select
+                          value={sel.seasonId}
+                          onChange={(e) => updateHotelSelection(idx, { seasonId: e.target.value })}
+                          className="w-full px-3 py-2 bg-white border border-[#D9E0EA] rounded-xl text-xs font-bold text-[#101828] focus:outline-none"
+                        >
+                          {hotelSeasons.length === 0 ? (
+                            <option value="">No Seasons</option>
+                          ) : (
+                            hotelSeasons.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.season_label}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {hotelSelections.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeHotelSelection(idx)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title="Remove this hotel"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Rate Category Selector Tabs for this Hotel */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                    {/* RED */}
+                    <button
+                      type="button"
+                      onClick={() => updateHotelSelection(idx, { category: 'RED' })}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        sel.category === 'RED'
+                          ? 'bg-red-50 border-red-500 shadow-xs ring-2 ring-red-500/20'
+                          : 'bg-white border-[#E4E7EC] hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-800">
+                          RED
+                        </span>
+                        <span className="w-2 h-2 rounded-full bg-red-500" />
+                      </div>
+                      <h4 className="text-xs font-bold text-[#101828] mt-1">LOWEST</h4>
+                      <p className="text-[11px] text-[#667085]">Lowest promotional tier</p>
+                    </button>
+
+                    {/* GREEN */}
+                    <button
+                      type="button"
+                      onClick={() => updateHotelSelection(idx, { category: 'GREEN' })}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        sel.category === 'GREEN'
+                          ? 'bg-emerald-50 border-emerald-500 shadow-xs ring-2 ring-emerald-500/20'
+                          : 'bg-white border-[#E4E7EC] hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                          GREEN
+                        </span>
+                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      </div>
+                      <h4 className="text-xs font-bold text-[#101828] mt-1">NORMAL</h4>
+                      <p className="text-[11px] text-[#667085]">Standard agency rate</p>
+                    </button>
+
+                    {/* YELLOW */}
+                    <button
+                      type="button"
+                      onClick={() => updateHotelSelection(idx, { category: 'YELLOW' })}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        sel.category === 'YELLOW'
+                          ? 'bg-amber-50 border-amber-500 shadow-xs ring-2 ring-amber-500/20'
+                          : 'bg-white border-[#E4E7EC] hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                          YELLOW
+                        </span>
+                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                      </div>
+                      <h4 className="text-xs font-bold text-[#101828] mt-1">HIGHEST</h4>
+                      <p className="text-[11px] text-[#667085]">Peak season / high tier</p>
+                    </button>
+
+                    {/* CUSTOM */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateHotelSelection(idx, { category: 'CUSTOM' });
+                        handleOpenCustomRateBuilder(idx);
+                      }}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        sel.category === 'CUSTOM'
+                          ? 'bg-purple-50 border-purple-500 shadow-xs ring-2 ring-purple-500/20'
+                          : 'bg-white border-[#E4E7EC] hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">
+                          CUSTOM
+                        </span>
+                        <span className="w-2 h-2 rounded-full bg-purple-500" />
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <h4 className="text-xs font-bold text-[#101828]">NEGOTIATED</h4>
+                        <span className="text-[10px] font-semibold text-purple-700 bg-purple-100 px-1 rounded">Edit Sheet ⚙️</span>
+                      </div>
+                      <p className="text-[11px] text-[#667085]">Click to build custom rate sheet</p>
+                    </button>
+                  </div>
+
+                  {/* Loaded Rate Matrix Preview for this Hotel */}
+                  <div className="bg-white p-3 rounded-xl border border-[#E4E7EC]">
+                    {sel.category === 'CUSTOM' ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-purple-700 flex items-center gap-1.5">
+                            <Sliders className="w-3.5 h-3.5" />
+                            Custom Negotiated Rate Sheet
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCustomRateBuilder(idx)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-purple-700 bg-purple-100 hover:bg-purple-200 transition-all"
+                          >
+                            <Sliders className="w-3 h-3" />
+                            <span>Edit Custom Rates</span>
+                          </button>
+                        </div>
+
+                        {sel.matrix.length > 0 ? (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs border border-purple-100 rounded-lg">
+                              <thead>
+                                <tr className="bg-purple-50/60 text-[10px] font-bold uppercase tracking-wider text-purple-900">
+                                  <th className="p-2">Room Type</th>
+                                  <th className="p-2">BB</th>
+                                  <th className="p-2">HB</th>
+                                  <th className="p-2">FB</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-purple-50 font-medium">
+                                {sel.matrix.map((r, mIdx) => (
+                                  <tr key={mIdx}>
+                                    <td className="p-2 font-bold text-[#101828]">{r.roomType}</td>
+                                    <td className="p-2">{r.bb !== '' ? `${sel.currency} ${r.bb}` : '—'}</td>
+                                    <td className="p-2 font-bold text-purple-700">{r.hb !== '' ? `${sel.currency} ${r.hb}` : '—'}</td>
+                                    <td className="p-2">{r.fb !== '' ? `${sel.currency} ${r.fb}` : '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <div className="py-2 text-center text-xs text-purple-600">
+                            Click "Edit Custom Rates" above to set negotiated room prices.
+                          </div>
+                        )}
+                      </div>
+                    ) : sel.hasLoadedRate ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Saved {sel.category} Rate Sheet Loaded (v{sel.versionNumber || 1})
+                          </span>
+                          <span className="text-[11px] font-bold text-[#101828]">
+                            Currency: {sel.currency}
+                          </span>
+                        </div>
+
+                        {/* Room Rate Grid Table */}
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border border-slate-100 rounded-lg">
+                            <thead>
+                              <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-[#667085]">
+                                <th className="p-2">Room Type</th>
+                                <th className="p-2">BB</th>
+                                <th className="p-2">HB</th>
+                                <th className="p-2">FB</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 font-medium">
+                              {sel.matrix.map((r, mIdx) => (
+                                <tr key={mIdx}>
+                                  <td className="p-2 font-bold text-[#101828]">{r.roomType}</td>
+                                  <td className="p-2">{r.bb !== '' ? `${sel.currency} ${r.bb}` : '—'}</td>
+                                  <td className="p-2 font-bold text-[#1455D9]">{r.hb !== '' ? `${sel.currency} ${r.hb}` : '—'}</td>
+                                  <td className="p-2">{r.fb !== '' ? `${sel.currency} ${r.fb}` : '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="py-3 px-2 text-center text-xs text-amber-700 bg-amber-50/60 rounded-lg flex items-center justify-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                        <span>
+                          No saved {sel.category} rate sheet found in Rate Management for this hotel + season. You can still customize rates in the next step.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Add Another Hotel Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const nextHotel = allHotels.find((h) => !hotelSelections.some((s) => s.hotelId === h.id)) || allHotels[0];
+                if (nextHotel) {
+                  addHotelSelection(nextHotel.id);
+                }
+              }}
+              className="w-full py-3 border-2 border-dashed border-[#D9E0EA] hover:border-[#1455D9] text-[#1455D9] rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition-all hover:bg-blue-50/50"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Another Hotel to this Share</span>
+            </button>
+          </div>
+
+          {/* Navigation to Step 3 */}
+          <div className="pt-4 border-t border-[#F0F2F5] flex justify-between">
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-[#101828] bg-slate-100 hover:bg-slate-200 transition-all"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>Back to Recipients</span>
+            </button>
+            <button
+              type="button"
+              disabled={hotelSelections.length === 0}
+              onClick={() => setStep(3)}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-[#1455D9] hover:bg-[#1044B2] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              <span>Next: Email Preview &amp; Dispatch</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* STEP 3: EMAIL PREVIEW, HANDOFF & SENDING */}
+      {/* ==================================================== */}
+      {step === 3 && (
+        <div className="bg-white p-6 rounded-2xl border border-[#D9E0EA] shadow-xs space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#F0F2F5]">
+            <div>
+              <h2 className="text-base font-bold text-[#101828]">Step 3: Email Preview &amp; Handoff</h2>
+              <p className="text-xs text-[#667085] mt-0.5">
+                Review the automatically composed quotation email. You can edit the message, copy details, or open directly in your preferred email app.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleCopy(emailBodyText, 'BODY')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
+              >
+                {copiedType === 'BODY' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedType === 'BODY' ? 'Copied Body' : 'Copy Content'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Email Envelope Header */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-[#D9E0EA] space-y-3">
+            {/* To Field */}
+            <div className="flex items-center gap-3 text-xs">
+              <span className="font-bold text-[#667085] uppercase tracking-wider w-16">To:</span>
+              <div className="flex-1 flex flex-wrap gap-1.5">
+                {recipientAnalysis.validEmails.map((email, eIdx) => (
+                  <span
+                    key={eIdx}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-100/70 text-blue-900 font-medium text-[11px]"
+                  >
+                    <Mail className="w-3 h-3 text-[#1455D9]" />
+                    {email}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Subject Field */}
+            <div className="flex items-center gap-3 text-xs pt-2 border-t border-slate-200">
+              <span className="font-bold text-[#667085] uppercase tracking-wider w-16">Subject:</span>
+              <input
+                type="text"
+                value={emailSubject}
+                onChange={(e) => setEmailSubject(e.target.value)}
+                className="flex-1 px-3 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs font-semibold text-[#101828] focus:outline-none"
+              />
+            </div>
+
+            {/* Custom Intro Note (Optional) */}
+            <div className="flex items-start gap-3 text-xs pt-2 border-t border-slate-200">
+              <span className="font-bold text-[#667085] uppercase tracking-wider w-16 mt-1">Note:</span>
+              <textarea
+                placeholder="Optional greeting or custom remark for this email proposal..."
+                value={customEmailIntro}
+                onChange={(e) => setCustomEmailIntro(e.target.value)}
+                rows={2}
+                className="flex-1 px-3 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs text-[#101828] focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Full Email Preview Box */}
+          <div className="border border-[#D9E0EA] rounded-xl overflow-hidden">
+            <div className="bg-slate-100 px-4 py-2 border-b border-[#D9E0EA] flex items-center justify-between text-xs font-bold text-[#667085]">
+              <span className="uppercase tracking-wider">Email Body Preview</span>
+              <span>{hotelSelections.length} Hotel Quote(s) Included</span>
+            </div>
+            <pre className="p-4 bg-white text-xs font-mono text-slate-800 whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
+              {emailBodyText}
+            </pre>
+          </div>
+
+          {/* Internal Notes (Will NOT be sent in email) */}
+          <div className="bg-amber-50/50 p-4 rounded-xl border border-amber-200 space-y-2">
+            <label className="text-xs font-bold text-amber-900 flex items-center gap-1.5 uppercase tracking-wider">
+              <Info className="w-4 h-4 text-amber-600" />
+              Internal CRM Notes (Saved for audit only — NOT included in email):
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Special deal agreed via phone with Managing Director; target 20 room nights."
+              value={internalNotes}
+              onChange={(e) => setInternalNotes(e.target.value)}
+              className="w-full px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs text-[#101828] focus:outline-none"
+            />
+          </div>
+
+          {/* Send / Handoff Actions */}
+          <div className="pt-4 border-t border-[#F0F2F5] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setStep(2)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-[#101828] bg-slate-100 hover:bg-slate-200 transition-all"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span>Back to Hotels</span>
+            </button>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              {/* Option A: Open in Default Email Client */}
+              <button
+                type="button"
+                onClick={handleOpenEmailApp}
+                disabled={isOpeningEmailApp || isSaving}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold text-[#101828] bg-white border border-[#D9E0EA] hover:bg-slate-50 shadow-xs transition-all"
+              >
+                <Mail className="w-4 h-4 text-[#1455D9]" />
+                <span>Open in Default Mail App</span>
+              </button>
+
+              {/* Option B: Continue in Gmail */}
+              <button
+                type="button"
+                onClick={handleOpenGmail}
+                disabled={isOpeningEmailApp || isSaving}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-[#1455D9] hover:bg-[#1044B2] shadow-sm transition-all"
+              >
+                {isOpeningEmailApp ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ExternalLink className="w-4 h-4" />
+                )}
+                <span>Launch in Gmail &amp; Save Snapshot</span>
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Staff Confirmation Dialog: "Did you successfully send this email?" */}
-      {showConfirmationPrompt && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-[#D9E0EA] shadow-2xl max-w-md w-full overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-[#D9E0EA] bg-[#F8FAFC] flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Smartphone className="w-5 h-5 text-[#1455D9]" />
-                <h3 className="font-bold text-sm text-[#101828]">Email Dispatch Confirmation</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowConfirmationPrompt(false)}
-                className="text-[#667085] hover:text-[#101828] text-xs font-bold"
-              >
-                ✕
-              </button>
+      {/* ==================================================== */}
+      {/* STEP 4: SEND CONFIRMATION & AUDIT HISTORY */}
+      {/* ==================================================== */}
+      {step === 4 && (
+        <div className="bg-white p-8 rounded-2xl border border-[#D9E0EA] shadow-xs text-center space-y-6 max-w-2xl mx-auto">
+          <div className="w-16 h-16 rounded-full bg-blue-50 text-[#1455D9] mx-auto flex items-center justify-center border-2 border-blue-100">
+            <Send className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-[#101828]">
+              Did you send the quotation email?
+            </h2>
+            <p className="text-xs text-[#667085] leading-relaxed">
+              Your email client has been launched with the rate quotation for{' '}
+              <strong>{selectedAgency?.name}</strong>. Please confirm if the email was dispatched from your device so we can update the CRM audit record.
+            </p>
+          </div>
+
+          {savedQuoteRef && (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-mono font-bold text-slate-700">
+              Quote Reference: #{savedQuoteRef}
             </div>
+          )}
 
-            <div className="p-5 space-y-4">
-              <p className="text-xs text-[#344054] leading-relaxed">
-                Your device's email handler was opened with pre-filled quote details for{' '}
-                <strong>{selectedRecipients[0]?.agencyName || 'the partner'}</strong>.
-              </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={() => handleConfirmSent(true)}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition-all"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Yes, I Sent It</span>
+            </button>
 
-              <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl text-xs text-blue-900 font-semibold">
-                Did you successfully send this email in your email app?
-              </div>
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={() => handleConfirmSent(false)}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-xs font-semibold text-[#101828] bg-slate-100 hover:bg-slate-200 transition-all"
+            >
+              <span>Not Sent Yet (Save as Draft)</span>
+            </button>
+          </div>
 
-              {confirmationNotice && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-medium flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{confirmationNotice}</span>
+          <div className="pt-6 border-t border-[#F0F2F5] flex items-center justify-center gap-4">
+            <button
+              type="button"
+              onClick={() => {
+                setStep(1);
+                setSavedQuoteId(null);
+                setSavedQuoteRef(null);
+              }}
+              className="text-xs font-semibold text-[#1455D9] hover:underline"
+            >
+              Share Rates with Another Agency
+            </button>
+            <span className="text-[#D9E0EA]">•</span>
+            <button
+              type="button"
+              onClick={() => navigate('/sales-activities')}
+              className="text-xs font-semibold text-[#667085] hover:underline"
+            >
+              View Rate Sharing History
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* CUSTOM RATE SHEET BUILDER MODAL */}
+      {/* ==================================================== */}
+      {editingCustomIndex !== null && hotelSelections[editingCustomIndex] && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-[#D9E0EA] shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto space-y-5 p-6">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-[#F0F2F5]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-100 text-purple-800">
+                    CUSTOM NEGOTIATED DEAL
+                  </span>
+                  <span className="text-xs text-[#667085]">
+                    {hotelSelections[editingCustomIndex].hotelName} • {hotelSelections[editingCustomIndex].seasonLabel}
+                  </span>
                 </div>
-              )}
-
-              <p className="text-[11px] text-[#667085]">
-                Note: Web browsers cannot detect whether Send was pressed inside an external email program. Clicking <strong>Yes, I Sent It</strong> safely flags this snapshot as <code>USER_CONFIRMED_SENT</code> with your staff name and timestamp.
-              </p>
-            </div>
-
-            <div className="p-4 border-t border-[#D9E0EA] bg-[#F8FAFC] flex justify-end gap-3">
+                <h3 className="text-lg font-bold text-[#101828] mt-1">
+                  Build Custom Rate Sheet for this Hotel
+                </h3>
+              </div>
               <button
                 type="button"
-                onClick={() => handleUserConfirmation(false)}
-                disabled={isSubmittingConfirmation}
-                className="px-4 py-2 text-xs font-semibold rounded-lg border border-[#D9E0EA] bg-white text-[#667085] hover:bg-slate-100 transition-colors disabled:opacity-50"
+                onClick={() => setEditingCustomIndex(null)}
+                className="p-1.5 text-[#667085] hover:bg-slate-100 rounded-lg transition-colors"
               >
-                Not Sent Yet
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Currency Selector */}
+            <div className="flex items-center justify-between bg-purple-50/60 p-3.5 rounded-xl border border-purple-100">
+              <div>
+                <h4 className="text-xs font-bold text-purple-950">Quotation Currency</h4>
+                <p className="text-[11px] text-purple-700">Select which currency these custom rates are calculated in.</p>
+              </div>
+              <select
+                value={customModalCurrency}
+                onChange={(e) => setCustomModalCurrency(e.target.value)}
+                className="px-3.5 py-1.5 bg-white border border-purple-200 rounded-lg text-xs font-bold text-[#101828] focus:outline-none"
+              >
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+                <option value="LKR">LKR (Rs)</option>
+              </select>
+            </div>
+
+            {/* Room Matrix Input Table */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[#101828]">
+                  Room Occupancy &amp; Meal Plan Rates ({customModalCurrency})
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomModalMatrix((prev) => [
+                      ...prev,
+                      { roomType: `Extra Room ${prev.length + 1}`, bb: '', hb: '', fb: '' }
+                    ]);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#1455D9] hover:underline"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Room Type</span>
+                </button>
+              </div>
+
+              <div className="overflow-x-auto border border-[#D9E0EA] rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-[#D9E0EA] text-[10px] font-bold uppercase tracking-wider text-[#667085]">
+                    <tr>
+                      <th className="p-3">Room Type</th>
+                      <th className="p-3">BB Rate ({customModalCurrency})</th>
+                      <th className="p-3">HB Rate ({customModalCurrency})</th>
+                      <th className="p-3">FB Rate ({customModalCurrency})</th>
+                      <th className="p-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {customModalMatrix.map((row, rIdx) => (
+                      <tr key={rIdx} className="hover:bg-slate-50/50">
+                        <td className="p-2.5">
+                          <input
+                            type="text"
+                            value={row.roomType}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setCustomModalMatrix((prev) => {
+                                const copy = [...prev];
+                                if (copy[rIdx]) copy[rIdx].roomType = val;
+                                return copy;
+                              });
+                            }}
+                            className="w-full px-2.5 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs font-bold text-[#101828]"
+                          />
+                        </td>
+                        <td className="p-2.5">
+                          <input
+                            type="number"
+                            placeholder="BB"
+                            value={row.bb}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? '' : Number(e.target.value);
+                              setCustomModalMatrix((prev) => {
+                                const copy = [...prev];
+                                if (copy[rIdx]) copy[rIdx].bb = val;
+                                return copy;
+                              });
+                            }}
+                            className="w-28 px-2.5 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs text-[#101828]"
+                          />
+                        </td>
+                        <td className="p-2.5">
+                          <input
+                            type="number"
+                            placeholder="HB"
+                            value={row.hb}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? '' : Number(e.target.value);
+                              setCustomModalMatrix((prev) => {
+                                const copy = [...prev];
+                                if (copy[rIdx]) copy[rIdx].hb = val;
+                                return copy;
+                              });
+                            }}
+                            className="w-28 px-2.5 py-1.5 bg-purple-50/60 border border-purple-300 rounded-lg text-xs font-bold text-purple-900"
+                          />
+                        </td>
+                        <td className="p-2.5">
+                          <input
+                            type="number"
+                            placeholder="FB"
+                            value={row.fb}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? '' : Number(e.target.value);
+                              setCustomModalMatrix((prev) => {
+                                const copy = [...prev];
+                                if (copy[rIdx]) copy[rIdx].fb = val;
+                                return copy;
+                              });
+                            }}
+                            className="w-28 px-2.5 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs text-[#101828]"
+                          />
+                        </td>
+                        <td className="p-2.5 text-right">
+                          {customModalMatrix.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCustomModalMatrix((prev) => prev.filter((_, i) => i !== rIdx));
+                              }}
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Supplements & Reductions */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[#101828]">
+                Supplements &amp; Reductions ({customModalCurrency})
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-[#667085]">Single Reduction (-)</label>
+                  <input
+                    type="number"
+                    value={customModalSupplements.singleReduction || ''}
+                    onChange={(e) =>
+                      setCustomModalSupplements((prev) => ({
+                        ...prev,
+                        singleReduction: e.target.value === '' ? '' : Number(e.target.value),
+                      }))
+                    }
+                    className="w-full px-2.5 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-[#667085]">Triple Supp (+)</label>
+                  <input
+                    type="number"
+                    value={customModalSupplements.tripleSupplement || ''}
+                    onChange={(e) =>
+                      setCustomModalSupplements((prev) => ({
+                        ...prev,
+                        tripleSupplement: e.target.value === '' ? '' : Number(e.target.value),
+                      }))
+                    }
+                    className="w-full px-2.5 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-[#667085]">BB Reduction (-)</label>
+                  <input
+                    type="number"
+                    value={customModalSupplements.bbReduction || ''}
+                    onChange={(e) =>
+                      setCustomModalSupplements((prev) => ({
+                        ...prev,
+                        bbReduction: e.target.value === '' ? '' : Number(e.target.value),
+                      }))
+                    }
+                    className="w-full px-2.5 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-[#667085]">Child Rate</label>
+                  <input
+                    type="number"
+                    value={customModalSupplements.childRate || ''}
+                    onChange={(e) =>
+                      setCustomModalSupplements((prev) => ({
+                        ...prev,
+                        childRate: e.target.value === '' ? '' : Number(e.target.value),
+                      }))
+                    }
+                    className="w-full px-2.5 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-[#667085]">Extra Bed Supp (+)</label>
+                  <input
+                    type="number"
+                    value={customModalSupplements.extraBedSupplement || ''}
+                    onChange={(e) =>
+                      setCustomModalSupplements((prev) => ({
+                        ...prev,
+                        extraBedSupplement: e.target.value === '' ? '' : Number(e.target.value),
+                      }))
+                    }
+                    className="w-full px-2.5 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Conditions & Taxes */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-[#101828]">Special Booking Conditions</label>
+                <textarea
+                  rows={2}
+                  value={customModalConditions}
+                  onChange={(e) => setCustomModalConditions(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-[#101828]">Tax Details</label>
+                <textarea
+                  rows={2}
+                  value={customModalTaxDetails}
+                  onChange={(e) => setCustomModalTaxDetails(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-[#D9E0EA] rounded-lg text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-4 border-t border-[#F0F2F5] flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setEditingCustomIndex(null)}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-[#667085] hover:bg-slate-100"
+              >
+                Cancel
               </button>
               <button
                 type="button"
-                onClick={() => handleUserConfirmation(true)}
-                disabled={isSubmittingConfirmation}
-                className="px-5 py-2 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
+                onClick={handleSaveCustomRateBuilder}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-700 shadow-sm transition-all"
               >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                {isSubmittingConfirmation ? 'Recording...' : 'Yes, I Sent It'}
+                <Check className="w-4 h-4" />
+                <span>Apply Custom Rate Sheet &amp; Return</span>
               </button>
             </div>
           </div>

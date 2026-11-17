@@ -114,14 +114,9 @@ export const AdminActivityLogPage: React.FC = () => {
             <ShieldAlert className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-[#101828]">Admin Activity & Audit Log</h1>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                Append-Only Security
-              </span>
-            </div>
+            <h1 className="text-2xl font-bold text-[#101828]">Admin Activity & Audit Log</h1>
             <p className="text-sm text-[#667085]">
-              Independent tamper-proof audit trail of rate calculations, manual price overrides, setup creations, and publications.
+              Audit trail of rate updates, price overrides, and system activities
             </p>
           </div>
         </div>
