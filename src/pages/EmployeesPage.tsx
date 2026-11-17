@@ -339,17 +339,17 @@ export const EmployeesPage: React.FC = () => {
       </div>
 
       {/* Employees Table */}
-      <div className="border border-[#D9E0EA] rounded-2xl overflow-hidden bg-white shadow-xs">
-        <table className="w-full text-left text-xs divide-y divide-[#D9E0EA]">
+      <div className="border border-[#D9E0EA] rounded-2xl overflow-x-auto bg-white shadow-xs">
+        <table className="w-full min-w-[750px] text-left text-xs divide-y divide-[#D9E0EA]">
           <thead className="bg-[#F8FAFC] text-[#667085] font-semibold">
             <tr>
-              <th className="p-4">Employee Name</th>
-              <th className="p-4">Role &amp; Permissions</th>
-              <th className="p-4">Department</th>
-              <th className="p-4">Account Status</th>
-              <th className="p-4">Last Login</th>
-              <th className="p-4">Created Date</th>
-              <th className="p-4 text-right">Actions</th>
+              <th className="p-4 min-w-[160px]">Employee Name</th>
+              <th className="p-4 min-w-[140px]">Role &amp; Permissions</th>
+              <th className="p-4 min-w-[110px]">Department</th>
+              <th className="p-4 min-w-[100px]">Account Status</th>
+              <th className="p-4 min-w-[130px]">Last Login</th>
+              <th className="p-4 min-w-[100px]">Created Date</th>
+              <th className="p-4 text-right min-w-[110px]">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#D9E0EA] bg-white">

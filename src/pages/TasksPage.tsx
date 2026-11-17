@@ -315,16 +315,16 @@ export const TasksPage: React.FC = () => {
       </div>
 
       {/* Task List Table */}
-      <div className="border border-[#D9E0EA] rounded-2xl overflow-hidden bg-white shadow-xs">
-        <table className="w-full text-left text-xs divide-y divide-[#D9E0EA]">
+      <div className="border border-[#D9E0EA] rounded-2xl overflow-x-auto bg-white shadow-xs">
+        <table className="w-full min-w-[700px] text-left text-xs divide-y divide-[#D9E0EA]">
           <thead className="bg-[#F8FAFC] text-[#667085] font-semibold">
             <tr>
-              <th className="p-4">Task Details</th>
-              <th className="p-4">Assigned Employee</th>
-              <th className="p-4">Priority</th>
-              <th className="p-4">Due Date</th>
-              <th className="p-4">Status</th>
-              <th className="p-4 text-right">Action</th>
+              <th className="p-4 min-w-[180px]">Task Details</th>
+              <th className="p-4 min-w-[140px]">Assigned Employee</th>
+              <th className="p-4 min-w-[90px]">Priority</th>
+              <th className="p-4 min-w-[110px]">Due Date</th>
+              <th className="p-4 min-w-[110px]">Status</th>
+              <th className="p-4 text-right min-w-[120px]">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#D9E0EA] bg-white">

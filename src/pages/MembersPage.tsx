@@ -515,17 +515,17 @@ export const MembersPage: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full min-w-[700px] text-left text-xs border-collapse">
               <thead>
                 {/* Light-Blue Header Row as in Reference Design */}
                 <tr className="bg-[#EAF2FF] border-b border-[#D9E0EA] text-[#08264F] font-bold tracking-wider uppercase text-[11px]">
-                  <th className="py-3 px-4">Member Name</th>
-                  <th className="py-3 px-4">Email</th>
-                  <th className="py-3 px-4">Phone</th>
-                  <th className="py-3 px-4">Position</th>
-                  <th className="py-3 px-4">Agency</th>
-                  <th className="py-3 px-4">Market</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4 min-w-[150px]">Member Name</th>
+                  <th className="py-3 px-4 min-w-[140px]">Email</th>
+                  <th className="py-3 px-4 min-w-[110px]">Phone</th>
+                  <th className="py-3 px-4 min-w-[110px]">Position</th>
+                  <th className="py-3 px-4 min-w-[120px]">Agency</th>
+                  <th className="py-3 px-4 min-w-[100px]">Market</th>
+                  <th className="py-3 px-4 text-right min-w-[120px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#D9E0EA]">
@@ -592,7 +592,7 @@ export const MembersPage: React.FC = () => {
                           <Eye className="w-3.5 h-3.5" />
                         </button>
                         <Link
-                          to={`/rates?memberId=${member.id}&tab=HISTORY`}
+                          to={`/sales-activities?memberId=${member.id}`}
                           className="p-1.5 text-[#667085] hover:text-[#1455D9] hover:bg-[#EAF2FF] rounded-lg transition-colors"
                           title="View Rate History for this Contact"
                         >
@@ -1034,7 +1034,7 @@ export const MembersPage: React.FC = () => {
               {/* Quick Actions & Rate History Link */}
               <div className="grid grid-cols-2 gap-3">
                 <Link
-                  to={`/rates?memberId=${viewingMember.id}&tab=HISTORY`}
+                  to={`/sales-activities?memberId=${viewingMember.id}`}
                   className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl hover:bg-blue-100/80 transition-colors flex items-center justify-center gap-2 text-xs font-semibold text-[#1455D9]"
                 >
                   <History className="w-4 h-4" />

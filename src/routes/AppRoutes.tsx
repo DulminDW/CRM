@@ -13,13 +13,13 @@ import { TravelAgenciesPage } from '../pages/TravelAgenciesPage';
 import { MarketsPage } from '../pages/MarketsPage';
 import { MembersPage } from '../pages/MembersPage';
 import { HotelsPage } from '../pages/HotelsPage';
+import { HotelDetailPage } from '../pages/HotelDetailPage';
 import { HotelSeasonsPage } from '../pages/HotelSeasonsPage';
-import { ContractsPage } from '../pages/ContractsPage';
 import { RateManagementPage } from '../pages/RateManagementPage';
-import { SpecialRatesPage } from '../pages/SpecialRatesPage';
 import { RateCalculatorPage } from '../pages/RateCalculatorPage';
 import { ShareRatesPage } from '../pages/ShareRatesPage';
 import { SalesActivitiesPage } from '../pages/SalesActivitiesPage';
+import { TeamActivitiesPage } from '../pages/TeamActivitiesPage';
 import { TeamChatPage } from '../pages/TeamChatPage';
 import { NotificationsPage } from '../pages/NotificationsPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
@@ -52,33 +52,17 @@ export const AppRoutes: React.FC = () => {
         <Route path="/markets" element={<MarketsPage />} />
         <Route path="/members" element={<MembersPage />} />
 
-        {/* Hotels & Pricing */}
+        {/* Hotel & Rate Management (Main Module) */}
         <Route path="/hotels" element={<HotelsPage />} />
+        <Route path="/hotels/:hotelId" element={<HotelDetailPage />} />
         <Route path="/seasons" element={<HotelSeasonsPage />} />
-        <Route path="/contracts" element={<ContractsPage />} />
-
-        {/* Rate Management (Requires CAN_MANAGE_RATES permission or ADMIN) */}
-        <Route
-          path="/rates"
-          element={
-            <ProtectedRoute requiredPermission="CAN_MANAGE_RATES">
-              <RateManagementPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/special-rates"
-          element={
-            <ProtectedRoute requiredPermission="CAN_MANAGE_RATES">
-              <SpecialRatesPage />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/rates" element={<RateManagementPage />} />
         <Route path="/calculator" element={<RateCalculatorPage />} />
 
-        {/* Sales & Distribution */}
+        {/* Rate Sharing & History */}
         <Route path="/share-rates" element={<ShareRatesPage />} />
         <Route path="/sales-activities" element={<SalesActivitiesPage />} />
+        <Route path="/team-activities" element={<TeamActivitiesPage />} />
         <Route path="/tasks" element={<TasksPage />} />
 
         {/* Communication & Realtime */}
@@ -105,15 +89,8 @@ export const AppRoutes: React.FC = () => {
           }
         />
 
-        {/* Settings (Requires ADMIN role) */}
-        <Route
-          path="/settings"
-          element={
-            <ProtectedRoute requiredRole="ADMIN">
-              <SettingsPage />
-            </ProtectedRoute>
-          }
-        />
+        {/* Settings */}
+        <Route path="/settings" element={<SettingsPage />} />
       </Route>
 
       {/* Catch-all redirect to 404 */}

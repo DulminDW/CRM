@@ -245,7 +245,7 @@ export const TravelAgenciesPage: React.FC = () => {
             <div>
               <h1 className="text-2xl font-bold text-navy-950 tracking-tight">Travel Agencies</h1>
               <p className="text-sm text-slate-500">
-                Level 1 of Contact Hierarchy — Master DMC & Partner Agency Profiles
+                Partner Travel Agencies &amp; DMCs
               </p>
             </div>
           </div>
@@ -255,18 +255,18 @@ export const TravelAgenciesPage: React.FC = () => {
           <button
             onClick={loadData}
             disabled={isLoading}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-slate-300 shadow-sm transition-colors"
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[#667085] bg-white border border-[#D9E0EA] rounded-xl hover:bg-slate-50 transition-colors shadow-sm"
             title="Refresh Agencies List"
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-navy-600' : 'text-slate-500'}`} />
-            Refresh
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-[#1455D9]' : 'text-slate-400'}`} />
+            <span>Refresh</span>
           </button>
           <button
             onClick={handleOpenCreateModal}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-navy-800 hover:bg-navy-900 rounded-lg shadow-sm hover:shadow transition-all"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#1455D9] hover:bg-[#1044B2] shadow-sm hover:shadow transition-all"
           >
             <Plus className="w-4 h-4" />
-            New Agency
+            <span>New Agency</span>
           </button>
         </div>
       </div>
@@ -351,16 +351,16 @@ export const TravelAgenciesPage: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm border-collapse">
+            <table className="w-full min-w-[700px] text-left text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-600 font-semibold text-xs tracking-wider uppercase">
-                  <th className="py-3 px-4">Agency Name</th>
-                  <th className="py-3 px-4">Location</th>
-                  <th className="py-3 px-4">Direct Contact</th>
-                  <th className="py-3 px-4 text-center">Markets</th>
-                  <th className="py-3 px-4 text-center">Members</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4 min-w-[180px]">Agency Name</th>
+                  <th className="py-3 px-4 min-w-[120px]">Location</th>
+                  <th className="py-3 px-4 min-w-[150px]">Direct Contact</th>
+                  <th className="py-3 px-4 text-center min-w-[80px]">Markets</th>
+                  <th className="py-3 px-4 text-center min-w-[80px]">Members</th>
+                  <th className="py-3 px-4 text-center min-w-[90px]">Status</th>
+                  <th className="py-3 px-4 text-right min-w-[120px]">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -673,7 +673,7 @@ export const TravelAgenciesPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-5 py-2 text-sm font-medium text-white bg-navy-800 hover:bg-navy-900 rounded-lg shadow-sm flex items-center gap-2"
+                  className="px-5 py-2 text-sm font-semibold text-white bg-[#1455D9] hover:bg-[#1044B2] rounded-xl shadow-sm flex items-center gap-2 transition-all"
                 >
                   {isSubmitting && <RefreshCw className="w-4 h-4 animate-spin" />}
                   {editingAgency ? 'Save Changes' : 'Create Agency'}

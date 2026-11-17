@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Menu, Bell, LogOut, ChevronDown, ShieldCheck, UserCheck } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { Link, useLocation } from 'react-router-dom';
+import { notificationService } from '../../services/notificationService';
 
 interface NavbarProps {
   onToggleSidebar: () => void;
@@ -10,7 +11,18 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
   const { profile, signOut } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const location = useLocation();
+
+  useEffect(() => {
+    const checkUnread = async () => {
+      const res = await notificationService.getMyNotifications();
+      setUnreadCount(res.unreadCount);
+    };
+    checkUnread();
+    const interval = setInterval(checkUnread, 30000); // 30s polling for live count
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -27,7 +39,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
     'special-rates': 'Special Rates',
     calculator: 'Rate Calculator',
     'share-rates': 'Share Rates',
-    'sales-activities': 'Sales Activities',
+    'sales-activities': 'Rate Sharing History',
+    'team-activities': 'Team Visits',
     tasks: 'Employee Daily Tasks',
     employees: 'Company Employees',
     'team-chat': 'Team Chat',
@@ -76,15 +89,20 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
           <span>RLS Protected</span>
         </div>
 
-        {/* Notifications Icon */}
-        <button
+        {/* Notifications Icon with Dynamic Unread Counter */}
+        <Link
+          to="/notifications"
           className="p-2 text-[#667085] hover:text-[#101828] hover:bg-slate-100 rounded-xl relative transition-colors"
-          title="Notifications"
+          title={unreadCount > 0 ? `${unreadCount} Unread Notifications` : 'Notifications'}
           aria-label="Notifications"
         >
           <Bell className="w-4 h-4" />
-          <span className="absolute top-2 right-2 w-2 h-2 bg-[#1455D9] rounded-full ring-2 ring-white"></span>
-        </button>
+          {unreadCount > 0 && (
+            <span className="absolute top-1.5 right-1.5 min-w-[16px] h-4 px-1 bg-red-600 text-white rounded-full text-[10px] font-black flex items-center justify-center ring-2 ring-white animate-pulse">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </Link>
 
         {/* Profile Dropdown */}
         <div className="relative">
