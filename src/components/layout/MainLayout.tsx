@@ -16,9 +16,9 @@ export const MainLayout: React.FC = () => {
         {/* Top Header */}
         <Navbar onToggleSidebar={() => setSidebarOpen(true)} />
 
-        {/* Page Viewport */}
-        <main className="flex-1 p-3.5 sm:p-5 lg:p-8 overflow-y-auto">
-          <div className="max-w-7xl mx-auto w-full">
+        {/* Page Viewport with iOS safe area padding */}
+        <main className="flex-1 p-3 sm:p-5 lg:p-8 overflow-y-auto safe-bottom">
+          <div className="max-w-7xl mx-auto w-full pb-12 sm:pb-6">
             <Outlet />
           </div>
         </main>

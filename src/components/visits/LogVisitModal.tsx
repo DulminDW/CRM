@@ -212,8 +212,8 @@ export const LogVisitModal: React.FC<LogVisitModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-fade-in flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-sm overflow-y-auto">
+      <div className="bg-white w-full max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-0 sm:my-8 animate-fade-in flex flex-col max-h-[92vh] sm:max-h-[90vh]">
         {/* Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-slate-900 to-navy-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
