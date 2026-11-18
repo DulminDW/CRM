@@ -35,6 +35,14 @@ BEGIN
         END IF;
     END IF;
 
+    -- Prevent deletion of System Administrator root account
+    IF EXISTS (
+        SELECT 1 FROM public.user_profiles
+        WHERE id = p_user_id AND LOWER(full_name) LIKE '%system administrator%'
+    ) THEN
+        RAISE EXCEPTION 'The System Administrator root account is protected and cannot be deleted.';
+    END IF;
+
     -- 2. Clean up or cascade dependent operational activity records
     -- Delete salesman visits & attachments
     DELETE FROM public.agency_visit_hotels WHERE visit_id IN (SELECT id FROM public.agency_visits WHERE salesman_id = p_user_id);
@@ -79,3 +87,4 @@ GRANT EXECUTE ON FUNCTION public.delete_company_employee TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_company_employee TO anon;
 
 NOTIFY pgrst, 'reload schema';
+

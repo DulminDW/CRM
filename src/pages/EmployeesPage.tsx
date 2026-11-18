@@ -196,6 +196,11 @@ export const EmployeesPage: React.FC = () => {
 
   // Permanently delete employee
   const handleDeleteEmployee = async (emp: EmployeeProfileRecord) => {
+    if (emp.full_name?.toLowerCase().includes('system administrator')) {
+      alert('The System Administrator root account is protected and cannot be deleted.');
+      return;
+    }
+
     if (emp.id === profile?.id) {
       alert('You cannot delete your own administrative account.');
       return;
@@ -466,7 +471,7 @@ export const EmployeesPage: React.FC = () => {
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
 
-                        {!isCurrentSelf && (
+                        {!isCurrentSelf && !emp.full_name?.toLowerCase().includes('system administrator') && (
                           <>
                             <button
                               type="button"
