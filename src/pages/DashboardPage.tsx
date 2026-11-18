@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Check,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -58,6 +59,34 @@ export const DashboardPage: React.FC = () => {
   const [searchVisitQuery, setSearchVisitQuery] = useState('');
   const [selectedSalesmanFilter, setSelectedSalesmanFilter] = useState('ALL');
   const [employeesList, setEmployeesList] = useState<{ id: string; full_name: string }[]>([]);
+
+  // Quick toggle task completion from dashboard
+  const handleToggleMyTask = async (task: MyTaskItem) => {
+    if (!profile) return;
+    const isCompleted = task.status === 'COMPLETED' || task.status === 'DONE';
+    const nextStatus = isCompleted ? 'IN_PROGRESS' : 'COMPLETED';
+
+    // Optimistic UI update
+    setMyTasks((prev) =>
+      prev.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t))
+    );
+
+    try {
+      await supabase
+        .from('tasks')
+        .update({
+          status: nextStatus,
+          updated_at: new Date().toISOString(),
+          completed_at: nextStatus === 'COMPLETED' ? new Date().toISOString() : null
+        })
+        .eq('id', task.id);
+
+      loadDashboardData();
+    } catch (err) {
+      console.error('Error updating task status:', err);
+      loadDashboardData();
+    }
+  };
 
   // Load Base Stats
   const loadDashboardData = useCallback(async () => {
@@ -525,39 +554,53 @@ export const DashboardPage: React.FC = () => {
                 <p className="text-xs text-slate-400 mt-0.5">New task assignments will appear here.</p>
               </div>
             ) : (
-              myTasks.map((t) => (
-                <div key={t.id} className="py-3 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        t.status === 'COMPLETED'
-                          ? 'bg-emerald-500'
-                          : t.status === 'BLOCKED'
-                          ? 'bg-red-500'
-                          : t.priority === 'URGENT' || t.priority === 'HIGH'
-                          ? 'bg-amber-500'
-                          : 'bg-blue-500'
-                      }`}
-                    />
-                    <div>
-                      <h4 className="text-xs font-semibold text-slate-800">{t.title}</h4>
-                      <span className="text-[10px] text-slate-400">Due: {t.due_date}</span>
+              myTasks.map((t) => {
+                const isCompleted = t.status === 'COMPLETED' || t.status === 'DONE';
+                return (
+                  <div key={t.id} className="py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleMyTask(t)}
+                        title={isCompleted ? 'Mark as In Progress' : 'Mark as Done'}
+                        className={`w-5 h-5 rounded-md flex-shrink-0 flex items-center justify-center border transition-all ${
+                          isCompleted
+                            ? 'bg-emerald-600 border-emerald-600 text-white'
+                            : 'border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 text-transparent hover:text-emerald-600'
+                        }`}
+                      >
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      </button>
+                      <div className="min-w-0">
+                        <h4
+                          className={`text-xs font-semibold truncate ${
+                            isCompleted ? 'line-through text-slate-400' : 'text-slate-800'
+                          }`}
+                        >
+                          {t.title}
+                        </h4>
+                        <span className="text-[10px] text-slate-400">Due: {t.due_date}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleMyTask(t)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                          isCompleted
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : t.status === 'BLOCKED'
+                            ? 'bg-red-50 text-red-700 border border-red-200'
+                            : 'bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 border border-slate-200'
+                        }`}
+                      >
+                        {isCompleted ? '✓ Done' : t.status}
+                      </button>
                     </div>
                   </div>
-
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      t.status === 'COMPLETED'
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : t.status === 'BLOCKED'
-                        ? 'bg-red-50 text-red-700 border border-red-200'
-                        : 'bg-slate-100 text-slate-700'
-                    }`}
-                  >
-                    {t.status}
-                  </span>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

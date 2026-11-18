@@ -162,6 +162,41 @@ export const TasksPage: React.FC = () => {
     }
   };
 
+  // Quick Toggle Done / In Progress
+  const handleToggleTaskDone = async (task: DailyTaskRecord, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!user) return;
+
+    const nextStatus: TaskStatus = task.status === 'COMPLETED' ? 'IN_PROGRESS' : 'COMPLETED';
+    
+    // Optimistic UI update
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id
+          ? {
+              ...t,
+              status: nextStatus,
+              completed_at: nextStatus === 'COMPLETED' ? new Date().toISOString() : null
+            }
+          : t
+      )
+    );
+
+    const res = await updateTaskStatus(
+      task.id,
+      {
+        status: nextStatus,
+        comment: nextStatus === 'COMPLETED' ? 'Marked as Done' : 'Reopened task'
+      },
+      user.id
+    );
+
+    if (res.error) {
+      alert(`Error updating task: ${res.error}`);
+      await loadTasksData();
+    }
+  };
+
   // Metrics
   const metrics = useMemo(() => {
     const total = tasks.length;
@@ -346,11 +381,15 @@ export const TasksPage: React.FC = () => {
                 const isOverdue = task.status !== 'COMPLETED' && task.status !== 'CANCELLED' && task.due_date < todayStr;
 
                 return (
-                  <tr key={task.id} className="hover:bg-slate-50 transition-colors">
+                  <tr key={task.id} className={`hover:bg-slate-50 transition-colors ${task.status === 'COMPLETED' ? 'bg-slate-50/60' : ''}`}>
                     <td className="p-4">
-                      <div className="font-bold text-[#101828] text-sm">{task.title}</div>
+                      <div className={`font-bold text-[#101828] text-sm ${task.status === 'COMPLETED' ? 'line-through text-slate-400' : ''}`}>
+                        {task.title}
+                      </div>
                       {task.description && (
-                        <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{task.description}</p>
+                        <p className={`text-[11px] line-clamp-1 mt-0.5 ${task.status === 'COMPLETED' ? 'text-slate-400' : 'text-slate-500'}`}>
+                          {task.description}
+                        </p>
                       )}
                       <span className="inline-block mt-1 text-[10px] uppercase font-bold text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded">
                         {task.category}
@@ -394,31 +433,59 @@ export const TasksPage: React.FC = () => {
                     </td>
 
                     <td className="p-4">
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          task.status === 'COMPLETED'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : task.status === 'IN_PROGRESS'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : task.status === 'ON_HOLD'
-                            ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                            : task.status === 'CANCELLED'
-                            ? 'bg-slate-100 text-slate-600'
-                            : 'bg-blue-50 text-blue-700 border border-blue-200'
-                        }`}
-                      >
-                        {task.status}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => handleToggleTaskDone(task, e)}
+                          title={task.status === 'COMPLETED' ? 'Mark as In Progress' : 'Mark as Done'}
+                          className={`w-6 h-6 rounded-lg flex items-center justify-center border transition-all ${
+                            task.status === 'COMPLETED'
+                              ? 'bg-emerald-600 border-emerald-600 text-white shadow-xs'
+                              : 'border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 text-transparent hover:text-emerald-600'
+                          }`}
+                        >
+                          <Check className="w-4 h-4 stroke-[3]" />
+                        </button>
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                            task.status === 'COMPLETED'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : task.status === 'IN_PROGRESS'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : task.status === 'ON_HOLD'
+                              ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                              : task.status === 'CANCELLED'
+                              ? 'bg-slate-100 text-slate-600'
+                              : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          }`}
+                        >
+                          {task.status}
+                        </span>
+                      </div>
                     </td>
 
                     <td className="p-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleInspectTask(task)}
-                        className="px-3 py-1.5 rounded-lg border border-[#D9E0EA] hover:bg-slate-100 text-[#1455D9] font-bold text-xs"
-                      >
-                        Inspect &amp; Update
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => handleToggleTaskDone(task, e)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                            task.status === 'COMPLETED'
+                              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+                              : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                          }`}
+                        >
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>{task.status === 'COMPLETED' ? 'Mark Undone' : 'Mark as Done'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInspectTask(task)}
+                          className="px-3 py-1.5 rounded-lg border border-[#D9E0EA] hover:bg-slate-100 text-[#1455D9] font-bold text-xs"
+                        >
+                          Inspect
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
